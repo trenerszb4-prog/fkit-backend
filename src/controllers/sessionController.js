@@ -46,7 +46,7 @@ function createSession(req, res) {
 	serviceType: 'cards',
 	title,
 	pinCode: generatePin(),
-	status: 'draft',
+	status: 'scheduled',
 	settings: {
 	  deckId: deckId || 'default-deck',
 	  cardMode: cardMode || 'full_deck',
