@@ -9,7 +9,8 @@ function getHub(req, res) {
 	success: true,
 	user: {
 	  id: req.user.id,
-	  name: req.user.name
+	  name: req.user.name,
+	  email: req.user.email
 	},
 	services,
 	activeSessions: userSessions.filter((session) =>
@@ -18,6 +19,4 @@ function getHub(req, res) {
   });
 }
 
-module.exports = {
-  getHub
-};
+module.exports = { getHub };
