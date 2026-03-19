@@ -1,4 +1,10 @@
-const { sessions, participants } = require('../data/db');
+const {
+  sessions,
+  participants,
+  screenCards,
+  timerStates,
+  questionStates
+} = require('../data/db');
 
 function generatePin() {
   return Math.floor(1000 + Math.random() * 9000).toString();
@@ -227,5 +233,52 @@ module.exports = {
   scheduleSession,
   startSession,
   getSessionParticipants,
-  kickParticipant
+  kickParticipant,
+  deleteSession
 };
+
+function deleteSession(req, res) {
+  const sessionIndex = sessions.findIndex(
+	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
+  );
+
+  if (sessionIndex === -1) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Сессия не найдена'
+	});
+  }
+
+  const sessionId = sessions[sessionIndex].id;
+
+  sessions.splice(sessionIndex, 1);
+
+  for (let i = participants.length - 1; i >= 0; i--) {
+	if (participants[i].sessionId === sessionId) {
+	  participants.splice(i, 1);
+	}
+  }
+
+  for (let i = screenCards.length - 1; i >= 0; i--) {
+	if (screenCards[i].sessionId === sessionId) {
+	  screenCards.splice(i, 1);
+	}
+  }
+
+  for (let i = timerStates.length - 1; i >= 0; i--) {
+	if (timerStates[i].sessionId === sessionId) {
+	  timerStates.splice(i, 1);
+	}
+  }
+
+  for (let i = questionStates.length - 1; i >= 0; i--) {
+	if (questionStates[i].sessionId === sessionId) {
+	  questionStates.splice(i, 1);
+	}
+  }
+
+  return res.json({
+	success: true,
+	message: 'Сессия завершена и удалена'
+  });
+}
