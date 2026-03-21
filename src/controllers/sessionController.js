@@ -22,16 +22,18 @@ function getSessions(req, res) {
 }
 
 function createSession(req, res) {
-  const {
-	title,
-	deckId,
-	cardMode,
-	randomCardsCount,
-	maxCardsOnScreen,
-	timerEnabled,
-	timerMinutes,
-	questions
-  } = req.body;
+const {
+  title,
+  deckId,
+  cardMode,
+  randomCardsCount,
+  maxCardsOnScreen,
+  timerEnabled,
+  timerMinutes,
+  questions,
+  replaceCardEnabled,
+  questionsEnabled
+} = req.body;
 
   if (!title) {
 	return res.status(400).json({
@@ -47,13 +49,15 @@ function createSession(req, res) {
 	title,
 	pinCode: generatePin(),
 	status: 'scheduled',
-	settings: {
+settings: {
 	  deckId: deckId || 'default-deck',
 	  cardMode: cardMode || 'full_deck',
 	  randomCardsCount: randomCardsCount || 0,
 	  maxCardsOnScreen: maxCardsOnScreen || 1,
 	  timerEnabled: Boolean(timerEnabled),
-	  timerMinutes: timerMinutes || 3
+	  timerMinutes: timerMinutes || 3,
+	  replaceCardEnabled: Boolean(replaceCardEnabled),
+	  questionsEnabled: Boolean(questionsEnabled)
 	},
 	questions: Array.isArray(questions) ? questions : [],
 	createdAt: new Date().toISOString()
@@ -98,7 +102,7 @@ function updateSession(req, res) {
 	});
   }
 
-  const {
+const {
 	title,
 	deckId,
 	cardMode,
@@ -106,7 +110,9 @@ function updateSession(req, res) {
 	maxCardsOnScreen,
 	timerEnabled,
 	timerMinutes,
-	questions
+	questions,
+	replaceCardEnabled,
+	questionsEnabled
   } = req.body;
 
   if (title !== undefined) session.title = title;
@@ -117,6 +123,8 @@ function updateSession(req, res) {
   if (timerEnabled !== undefined) session.settings.timerEnabled = Boolean(timerEnabled);
   if (timerMinutes !== undefined) session.settings.timerMinutes = timerMinutes;
   if (questions !== undefined && Array.isArray(questions)) session.questions = questions;
+  if (replaceCardEnabled !== undefined) session.settings.replaceCardEnabled = Boolean(replaceCardEnabled);
+  if (questionsEnabled !== undefined) session.settings.questionsEnabled = Boolean(questionsEnabled);
 
   return res.json({
 	success: true,
