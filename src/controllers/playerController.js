@@ -21,7 +21,7 @@ function getSessionByPin(pinCode) {
 }
 
 function startOrRestartTimer(session) {
-  if (!session.settings.timerEnabled) {
+  if (!session.settings?.timerEnabled) {
 	return null;
   }
 
@@ -50,6 +50,35 @@ function startOrRestartTimer(session) {
   return timer;
 }
 
+function getOrAssignRandomCards(session, participant, cards) {
+  const count = Math.max(1, Number(session.settings?.randomCardsCount || 1));
+
+  if (Array.isArray(participant.assignedCardIds) && participant.assignedCardIds.length) {
+	return cards.filter((card) => participant.assignedCardIds.includes(card.id));
+  }
+
+  const shuffled = [...cards].sort(() => Math.random() - 0.5);
+  const selected = shuffled.slice(0, Math.min(count, cards.length));
+
+  participant.assignedCardIds = selected.map((card) => card.id);
+  return selected;
+}
+
+function getParticipantActiveCard(sessionId, participantId) {
+  return screenCards.find(
+	(item) =>
+	  item.sessionId === sessionId &&
+	  item.participantId === participantId &&
+	  item.isActive
+  );
+}
+
+function getSessionActiveCards(sessionId) {
+  return screenCards
+	.filter((item) => item.sessionId === sessionId && item.isActive)
+	.sort((a, b) => new Date(a.shownAt || 0) - new Date(b.shownAt || 0));
+}
+
 function joinByPin(req, res) {
   const { name, pinCode, source } = req.body;
 
@@ -75,6 +104,7 @@ function joinByPin(req, res) {
 	displayName: name,
 	source: source || 'browser',
 	status: 'active',
+	assignedCardIds: [],
 	joinedAt: new Date().toISOString()
   };
 
@@ -149,7 +179,7 @@ function getPlayerCards(req, res) {
 	});
   }
 
-  const deck = decks.find((item) => item.id === session.settings.deckId);
+  const deck = decks.find((item) => item.id === session.settings?.deckId);
 
   if (!deck) {
 	return res.status(404).json({
@@ -162,17 +192,11 @@ function getPlayerCards(req, res) {
 
   let availableCards = cards;
 
-  if (session.settings.cardMode === 'random_subset') {
-	const count = session.settings.randomCardsCount || 1;
-	availableCards = cards.slice(0, count);
+  if (session.settings?.cardMode === 'random_subset') {
+	availableCards = getOrAssignRandomCards(session, participant, cards);
   }
 
-  const activeScreenCard = screenCards.find(
-	(item) =>
-	  item.sessionId === session.id &&
-	  item.participantId === participant.id &&
-	  item.isActive
-  );
+  const activeScreenCard = getParticipantActiveCard(session.id, participant.id);
 
   return res.json({
 	success: true,
@@ -215,25 +239,45 @@ function showCard(req, res) {
 	});
   }
 
-  const participantActiveCard = screenCards.find(
-	(item) =>
-	  item.sessionId === session.id &&
-	  item.participantId === participant.id &&
-	  item.isActive
-  );
+  const settings = session.settings || {};
+  const replaceCardEnabled = Boolean(settings.replaceCardEnabled);
+  const maxCardsOnScreen = Math.max(1, Number(settings.maxCardsOnScreen || 1));
+
+  if (settings.cardMode === 'random_subset') {
+	const allowedCards = getOrAssignRandomCards(
+	  session,
+	  participant,
+	  deckCards.filter((item) => item.deckId === card.deckId)
+	);
+
+	const allowedCardIds = allowedCards.map((item) => item.id);
+
+	if (!allowedCardIds.includes(cardId)) {
+	  return res.status(403).json({
+		success: false,
+		message: 'Эта карта недоступна участнику'
+	  });
+	}
+  }
+
+  const participantActiveCard = getParticipantActiveCard(session.id, participant.id);
 
   if (participantActiveCard) {
 	participantActiveCard.isActive = false;
 	participantActiveCard.removedAt = new Date().toISOString();
   }
 
-  const activeCards = screenCards
-	.filter((item) => item.sessionId === session.id && item.isActive)
-	.sort((a, b) => new Date(a.shownAt) - new Date(b.shownAt));
-
-  if (activeCards.length >= session.settings.maxCardsOnScreen) {
-	activeCards[0].isActive = false;
-	activeCards[0].removedAt = new Date().toISOString();
+  if (replaceCardEnabled) {
+	getSessionActiveCards(session.id).forEach((item) => {
+	  item.isActive = false;
+	  item.removedAt = new Date().toISOString();
+	});
+  } else {
+	const activeCards = getSessionActiveCards(session.id);
+	if (activeCards.length >= maxCardsOnScreen) {
+	  activeCards[0].isActive = false;
+	  activeCards[0].removedAt = new Date().toISOString();
+	}
   }
 
   const newScreenCard = {
@@ -274,12 +318,7 @@ function recallCard(req, res) {
 	});
   }
 
-  const activeCard = screenCards.find(
-	(item) =>
-	  item.sessionId === participant.sessionId &&
-	  item.participantId === participant.id &&
-	  item.isActive
-  );
+  const activeCard = getParticipantActiveCard(participant.sessionId, participant.id);
 
   if (!activeCard) {
 	return res.status(404).json({
