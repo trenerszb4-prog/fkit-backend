@@ -4,17 +4,46 @@ const {
   screenCards
 } = require('../data/db');
 
-function getScreen(req, res) {
+function getSessionOr404(req, res) {
   const session = sessions.find(
 	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
   );
 
   if (!session) {
-	return res.status(404).json({
+	res.status(404).json({
 	  success: false,
 	  message: 'Сессия не найдена'
 	});
+	return null;
   }
+
+  return session;
+}
+
+function normalizeVisibleCards(session, cards) {
+  const settings = session.settings || {};
+
+  const maxCardsOnScreen = Math.max(1, Number(settings.maxCardsOnScreen || 1));
+  const replaceCardEnabled = Boolean(settings.replaceCardEnabled);
+
+  const sortedCards = [...cards].sort((a, b) => {
+	const aTime = new Date(a.shownAt || a.createdAt || a.addedAt || 0).getTime();
+	const bTime = new Date(b.shownAt || b.createdAt || b.addedAt || 0).getTime();
+	return aTime - bTime;
+  });
+
+  if (!sortedCards.length) return [];
+
+  if (replaceCardEnabled) {
+	return [sortedCards[sortedCards.length - 1]];
+  }
+
+  return sortedCards.slice(-maxCardsOnScreen);
+}
+
+function getScreen(req, res) {
+  const session = getSessionOr404(req, res);
+  if (!session) return;
 
   const sessionParticipants = participants.filter(
 	(item) => item.sessionId === session.id && item.status === 'active'
@@ -23,6 +52,8 @@ function getScreen(req, res) {
   const activeCards = screenCards.filter(
 	(item) => item.sessionId === session.id && item.isActive
   );
+
+  const visibleCards = normalizeVisibleCards(session, activeCards);
 
   return res.json({
 	success: true,
@@ -36,21 +67,13 @@ function getScreen(req, res) {
 	},
 	participants: sessionParticipants,
 	participantsCount: sessionParticipants.length,
-	screenCards: activeCards
+	screenCards: visibleCards
   });
 }
 
 function clearScreen(req, res) {
-  const session = sessions.find(
-	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
-  );
-
-  if (!session) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
-  }
+  const session = getSessionOr404(req, res);
+  if (!session) return;
 
   screenCards.forEach((card) => {
 	if (card.sessionId === session.id && card.isActive) {
@@ -66,16 +89,8 @@ function clearScreen(req, res) {
 }
 
 function deleteScreenCard(req, res) {
-  const session = sessions.find(
-	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
-  );
-
-  if (!session) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
-  }
+  const session = getSessionOr404(req, res);
+  if (!session) return;
 
   const screenCard = screenCards.find(
 	(item) =>
