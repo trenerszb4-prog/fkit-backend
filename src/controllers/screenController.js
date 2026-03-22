@@ -1,7 +1,8 @@
 const {
   sessions,
   participants,
-  screenCards
+  screenCards,
+  decks
 } = require('../data/db');
 
 function getSessionOr404(req, res) {
@@ -54,8 +55,9 @@ function getScreen(req, res) {
   );
 
   const visibleCards = normalizeVisibleCards(session, activeCards);
+  const deck = decks.find((item) => item.id === session.settings?.deckId) || null;
 
-  return res.json({
+return res.json({
     success: true,
     session: {
       id: session.id,
@@ -65,6 +67,7 @@ function getScreen(req, res) {
       questions: session.questions,
       settings: session.settings
     },
+    deck,
     participants: sessionParticipants,
     participantsCount: sessionParticipants.length,
     screenCards: visibleCards
