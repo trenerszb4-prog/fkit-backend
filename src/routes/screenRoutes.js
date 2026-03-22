@@ -16,5 +16,6 @@ router.get('/:id/timer', timerController.getSessionTimer);
 router.get('/:id/questions', questionController.getQuestions);
 router.post('/:id/questions/next', questionController.nextQuestion);
 router.post('/:id/questions/prev', questionController.prevQuestion);
+router.post('/:sessionId/clear', screenController.clearScreen);
 
 module.exports = router;

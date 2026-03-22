@@ -116,6 +116,19 @@ function deleteScreenCard(req, res) {
   });
 }
 
+exports.clearScreen = (req, res) => {
+  const { sessionId } = req.params;
+
+  const session = sessions.find(s => s.id === sessionId);
+  if (!session) {
+    return res.status(404).json({ success: false, message: "Сессия не найдена" });
+  }
+
+  screenCards = screenCards.filter(card => card.sessionId !== sessionId);
+
+  return res.json({ success: true });
+};
+
 module.exports = {
   getScreen,
   clearScreen,
