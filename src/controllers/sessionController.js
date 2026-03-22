@@ -247,14 +247,29 @@ function scheduleSession(req, res) {
 	});
   }
 
-  if (!OPEN_SESSION_STATUSES.includes(session.status)) {
-	const openedLimitCheck = ensureOpenSessionsLimit(req.user.id, session.id);
-	if (!openedLimitCheck.ok) {
-	  return res.status(400).json({
-		success: false,
-		message: openedLimitCheck.message
-	  });
-	}
+  if (session.status === 'live') {
+	return res.status(400).json({
+	  success: false,
+	  message: 'Нельзя запланировать уже запущенную сессию'
+	});
+  }
+
+  if (session.status === 'scheduled') {
+	touchSession(session);
+
+	return res.json({
+	  success: true,
+	  message: 'Сессия уже запланирована',
+	  session
+	});
+  }
+
+  const openedLimitCheck = ensureOpenSessionsLimit(req.user.id, session.id);
+  if (!openedLimitCheck.ok) {
+	return res.status(400).json({
+	  success: false,
+	  message: openedLimitCheck.message
+	});
   }
 
   session.status = 'scheduled';
@@ -277,14 +292,19 @@ function startSession(req, res) {
 	});
   }
 
-  if (!OPEN_SESSION_STATUSES.includes(session.status)) {
-	const openedLimitCheck = ensureOpenSessionsLimit(req.user.id, session.id);
-	if (!openedLimitCheck.ok) {
-	  return res.status(400).json({
-		success: false,
-		message: openedLimitCheck.message
-	  });
-	}
+  if (session.status === 'live') {
+	return res.status(400).json({
+	  success: false,
+	  message: 'Сессия уже запущена'
+	});
+  }
+
+  const openedLimitCheck = ensureOpenSessionsLimit(req.user.id, session.id);
+  if (!openedLimitCheck.ok) {
+	return res.status(400).json({
+	  success: false,
+	  message: openedLimitCheck.message
+	});
   }
 
   session.status = 'live';
@@ -297,7 +317,6 @@ function startSession(req, res) {
 	session
   });
 }
-
 function getSessionParticipants(req, res) {
   const session = getSessionByOwner(req.params.id, req.user.id);
 
