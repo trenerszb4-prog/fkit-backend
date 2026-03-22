@@ -2,3 +2,5 @@ node_modules
 .env
 .DS_Store
 ngrok
+.DS_Store
+src/.DS_Store
