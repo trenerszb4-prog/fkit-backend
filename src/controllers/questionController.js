@@ -18,43 +18,67 @@ function ensureQuestionState(session) {
   return state;
 }
 
-function getQuestions(req, res) {
+function normalizeQuestionState(session, state) {
+  const questions = Array.isArray(session.questions) ? session.questions : [];
+
+  if (questions.length === 0) {
+	state.currentQuestionIndex = 0;
+	return {
+	  questions,
+	  currentQuestionIndex: 0,
+	  currentQuestion: null
+	};
+  }
+
+  if (state.currentQuestionIndex < 0) {
+	state.currentQuestionIndex = 0;
+  }
+
+  if (state.currentQuestionIndex > questions.length - 1) {
+	state.currentQuestionIndex = questions.length - 1;
+  }
+
+  return {
+	questions,
+	currentQuestionIndex: state.currentQuestionIndex,
+	currentQuestion: questions[state.currentQuestionIndex] || null
+  };
+}
+
+function getSessionForScreenQuestions(req, res) {
   const session = sessions.find(
 	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
   );
 
   if (!session) {
-	return res.status(404).json({
+	res.status(404).json({
 	  success: false,
 	  message: 'Сессия не найдена'
 	});
+	return null;
   }
 
-  const questions = Array.isArray(session.questions) ? session.questions : [];
-  const state = ensureQuestionState(session);
+  return session;
+}
 
-  const currentQuestion =
-	questions.length > 0 ? questions[state.currentQuestionIndex] || null : null;
+function getQuestions(req, res) {
+  const session = getSessionForScreenQuestions(req, res);
+  if (!session) return;
+
+  const state = ensureQuestionState(session);
+  const result = normalizeQuestionState(session, state);
 
   return res.json({
 	success: true,
-	questions,
-	currentQuestionIndex: state.currentQuestionIndex,
-	currentQuestion
+	questions: result.questions,
+	currentQuestionIndex: result.currentQuestionIndex,
+	currentQuestion: result.currentQuestion
   });
 }
 
 function nextQuestion(req, res) {
-  const session = sessions.find(
-	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
-  );
-
-  if (!session) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
-  }
+  const session = getSessionForScreenQuestions(req, res);
+  if (!session) return;
 
   const questions = Array.isArray(session.questions) ? session.questions : [];
 
@@ -71,24 +95,19 @@ function nextQuestion(req, res) {
 	state.currentQuestionIndex += 1;
   }
 
+  const result = normalizeQuestionState(session, state);
+
   return res.json({
 	success: true,
-	currentQuestionIndex: state.currentQuestionIndex,
-	currentQuestion: questions[state.currentQuestionIndex]
+	questions: result.questions,
+	currentQuestionIndex: result.currentQuestionIndex,
+	currentQuestion: result.currentQuestion
   });
 }
 
 function prevQuestion(req, res) {
-  const session = sessions.find(
-	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
-  );
-
-  if (!session) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
-  }
+  const session = getSessionForScreenQuestions(req, res);
+  if (!session) return;
 
   const questions = Array.isArray(session.questions) ? session.questions : [];
 
@@ -105,10 +124,13 @@ function prevQuestion(req, res) {
 	state.currentQuestionIndex -= 1;
   }
 
+  const result = normalizeQuestionState(session, state);
+
   return res.json({
 	success: true,
-	currentQuestionIndex: state.currentQuestionIndex,
-	currentQuestion: questions[state.currentQuestionIndex]
+	questions: result.questions,
+	currentQuestionIndex: result.currentQuestionIndex,
+	currentQuestion: result.currentQuestion
   });
 }
 
