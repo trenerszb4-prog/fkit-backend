@@ -15,7 +15,7 @@ function getSessionByPin(pinCode) {
   return sessions.find(
 	(session) =>
 	  session.pinCode === pinCode &&
-	  ['scheduled', 'live'].includes(session.status) &&
+	  session.status === 'live' &&
 	  session.serviceType === 'cards'
   );
 }
