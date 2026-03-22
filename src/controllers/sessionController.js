@@ -6,258 +6,58 @@ const {
   questionStates
 } = require('../data/db');
 
+const OPEN_SESSION_STATUSES = ['scheduled', 'live'];
+const MAX_OPEN_SESSIONS_PER_USER = 3;
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
+
 function generatePin() {
   return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
-function getSessions(req, res) {
-  const userSessions = sessions.filter(
-	(session) => session.ownerUserId === req.user.id
-  );
-
-  return res.json({
-	success: true,
-	sessions: userSessions
-  });
+function nowIso() {
+  return new Date().toISOString();
 }
 
-function createSession(req, res) {
-const {
-  title,
-  deckId,
-  cardMode,
-  randomCardsCount,
-  maxCardsOnScreen,
-  timerEnabled,
-  timerMinutes,
-  questions,
-  replaceCardEnabled,
-  questionsEnabled
-} = req.body;
-
-  if (!title) {
-	return res.status(400).json({
-	  success: false,
-	  message: 'Название сессии обязательно'
-	});
-  }
-
-  const newSession = {
-	id: `s_${Date.now()}`,
-	ownerUserId: req.user.id,
-	serviceType: 'cards',
-	title,
-	pinCode: generatePin(),
-	status: 'scheduled',
-settings: {
-	  deckId: deckId || 'default-deck',
-	  cardMode: cardMode || 'full_deck',
-	  randomCardsCount: randomCardsCount || 0,
-	  maxCardsOnScreen: maxCardsOnScreen || 1,
-	  timerEnabled: Boolean(timerEnabled),
-	  timerMinutes: timerMinutes || 3,
-	  replaceCardEnabled: Boolean(replaceCardEnabled),
-	  questionsEnabled: Boolean(questionsEnabled)
-	},
-	questions: Array.isArray(questions) ? questions : [],
-	createdAt: new Date().toISOString()
-  };
-
-  sessions.push(newSession);
-
-  return res.status(201).json({
-	success: true,
-	message: 'Сессия создана',
-	session: newSession
-  });
+function getSessionIndexByOwner(sessionId, ownerUserId) {
+  return sessions.findIndex(
+	(item) => item.id === sessionId && item.ownerUserId === ownerUserId
+  );
 }
 
-function getSessionById(req, res) {
-  const session = sessions.find(
-	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
+function getSessionByOwner(sessionId, ownerUserId) {
+  return sessions.find(
+	(item) => item.id === sessionId && item.ownerUserId === ownerUserId
   );
-
-  if (!session) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
-  }
-
-  return res.json({
-	success: true,
-	session
-  });
 }
 
-function updateSession(req, res) {
-  const session = sessions.find(
-	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
-  );
-
-  if (!session) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
-  }
-
-const {
-	title,
-	deckId,
-	cardMode,
-	randomCardsCount,
-	maxCardsOnScreen,
-	timerEnabled,
-	timerMinutes,
-	questions,
-	replaceCardEnabled,
-	questionsEnabled
-  } = req.body;
-
-  if (title !== undefined) session.title = title;
-  if (deckId !== undefined) session.settings.deckId = deckId;
-  if (cardMode !== undefined) session.settings.cardMode = cardMode;
-  if (randomCardsCount !== undefined) session.settings.randomCardsCount = randomCardsCount;
-  if (maxCardsOnScreen !== undefined) session.settings.maxCardsOnScreen = maxCardsOnScreen;
-  if (timerEnabled !== undefined) session.settings.timerEnabled = Boolean(timerEnabled);
-  if (timerMinutes !== undefined) session.settings.timerMinutes = timerMinutes;
-  if (questions !== undefined && Array.isArray(questions)) session.questions = questions;
-  if (replaceCardEnabled !== undefined) session.settings.replaceCardEnabled = Boolean(replaceCardEnabled);
-  if (questionsEnabled !== undefined) session.settings.questionsEnabled = Boolean(questionsEnabled);
-
-  return res.json({
-	success: true,
-	message: 'Сессия обновлена',
-	session
-  });
+function touchSession(session) {
+  session.updatedAt = nowIso();
 }
 
-function scheduleSession(req, res) {
-  const session = sessions.find(
-	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
-  );
-
-  if (!session) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
-  }
-
-  session.status = 'scheduled';
-
-  return res.json({
-	success: true,
-	message: 'Сессия запланирована',
-	session
-  });
+function countOpenSessionsForUser(userId, excludeSessionId = null) {
+  return sessions.filter((session) => {
+	if (session.ownerUserId !== userId) return false;
+	if (excludeSessionId && session.id === excludeSessionId) return false;
+	return OPEN_SESSION_STATUSES.includes(session.status);
+  }).length;
 }
 
-function startSession(req, res) {
-  const session = sessions.find(
-	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
-  );
+function ensureOpenSessionsLimit(userId, excludeSessionId = null) {
+  const openCount = countOpenSessionsForUser(userId, excludeSessionId);
 
-  if (!session) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
+  if (openCount >= MAX_OPEN_SESSIONS_PER_USER) {
+	return {
+	  ok: false,
+	  message: 'У администратора может быть не более 3 активных или запланированных сессий'
+	};
   }
 
-  session.status = 'live';
-
-  return res.json({
-	success: true,
-	message: 'Сессия начата',
-	session
-  });
+  return { ok: true };
 }
 
-function getSessionParticipants(req, res) {
-  const session = sessions.find(
-	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
-  );
-
-  if (!session) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
-  }
-
-  const sessionParticipants = participants.filter(
-	(item) => item.sessionId === session.id
-  );
-
-  return res.json({
-	success: true,
-	participants: sessionParticipants,
-	count: sessionParticipants.filter((item) => item.status === 'active').length
-  });
-}
-
-function kickParticipant(req, res) {
-  const session = sessions.find(
-	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
-  );
-
-  if (!session) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
-  }
-
-  const participant = participants.find(
-	(item) =>
-	  item.id === req.params.participantId &&
-	  item.sessionId === session.id
-  );
-
-  if (!participant) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Участник не найден'
-	});
-  }
-
-  participant.status = 'kicked';
-  participant.kickedAt = new Date().toISOString();
-
-  return res.json({
-	success: true,
-	message: 'Участник удалён из комнаты',
-	participant
-  });
-}
-
-module.exports = {
-  getSessions,
-  createSession,
-  getSessionById,
-  updateSession,
-  scheduleSession,
-  startSession,
-  getSessionParticipants,
-  kickParticipant,
-  deleteSession
-};
-
-function deleteSession(req, res) {
-  const sessionIndex = sessions.findIndex(
-	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
-  );
-
-  if (sessionIndex === -1) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
-  }
-
-  const sessionId = sessions[sessionIndex].id;
+function removeSessionById(sessionId) {
+  const sessionIndex = sessions.findIndex((item) => item.id === sessionId);
+  if (sessionIndex === -1) return false;
 
   sessions.splice(sessionIndex, 1);
 
@@ -285,8 +85,305 @@ function deleteSession(req, res) {
 	}
   }
 
+  return true;
+}
+
+function cleanupExpiredSessions() {
+  const now = Date.now();
+  const expiredIds = sessions
+	.filter((session) => {
+	  const baseDate = session.updatedAt || session.createdAt;
+	  if (!baseDate) return false;
+
+	  const age = now - new Date(baseDate).getTime();
+	  return age > SESSION_TTL_MS;
+	})
+	.map((session) => session.id);
+
+  expiredIds.forEach(removeSessionById);
+
+  return expiredIds.length;
+}
+
+function getSessions(req, res) {
+  const userSessions = sessions.filter(
+	(session) => session.ownerUserId === req.user.id
+  );
+
+  return res.json({
+	success: true,
+	sessions: userSessions
+  });
+}
+
+function createSession(req, res) {
+  const {
+	title,
+	deckId,
+	cardMode,
+	randomCardsCount,
+	maxCardsOnScreen,
+	timerEnabled,
+	timerMinutes,
+	questions,
+	replaceCardEnabled,
+	questionsEnabled
+  } = req.body;
+
+  if (!title) {
+	return res.status(400).json({
+	  success: false,
+	  message: 'Название сессии обязательно'
+	});
+  }
+
+  const openedLimitCheck = ensureOpenSessionsLimit(req.user.id);
+  if (!openedLimitCheck.ok) {
+	return res.status(400).json({
+	  success: false,
+	  message: openedLimitCheck.message
+	});
+  }
+
+  const timestamp = nowIso();
+
+  const newSession = {
+	id: `s_${Date.now()}`,
+	ownerUserId: req.user.id,
+	serviceType: 'cards',
+	title,
+	pinCode: generatePin(),
+	status: 'scheduled',
+	settings: {
+	  deckId: deckId || 'default-deck',
+	  cardMode: cardMode || 'full_deck',
+	  randomCardsCount: randomCardsCount || 0,
+	  maxCardsOnScreen: maxCardsOnScreen || 1,
+	  timerEnabled: Boolean(timerEnabled),
+	  timerMinutes: timerMinutes || 3,
+	  replaceCardEnabled: Boolean(replaceCardEnabled),
+	  questionsEnabled: Boolean(questionsEnabled)
+	},
+	questions: Array.isArray(questions) ? questions : [],
+	createdAt: timestamp,
+	updatedAt: timestamp
+  };
+
+  sessions.push(newSession);
+
+  return res.status(201).json({
+	success: true,
+	message: 'Сессия создана',
+	session: newSession
+  });
+}
+
+function getSessionById(req, res) {
+  const session = getSessionByOwner(req.params.id, req.user.id);
+
+  if (!session) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Сессия не найдена'
+	});
+  }
+
+  return res.json({
+	success: true,
+	session
+  });
+}
+
+function updateSession(req, res) {
+  const session = getSessionByOwner(req.params.id, req.user.id);
+
+  if (!session) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Сессия не найдена'
+	});
+  }
+
+  const {
+	title,
+	deckId,
+	cardMode,
+	randomCardsCount,
+	maxCardsOnScreen,
+	timerEnabled,
+	timerMinutes,
+	questions,
+	replaceCardEnabled,
+	questionsEnabled
+  } = req.body;
+
+  if (title !== undefined) session.title = title;
+  if (deckId !== undefined) session.settings.deckId = deckId;
+  if (cardMode !== undefined) session.settings.cardMode = cardMode;
+  if (randomCardsCount !== undefined) session.settings.randomCardsCount = randomCardsCount;
+  if (maxCardsOnScreen !== undefined) session.settings.maxCardsOnScreen = maxCardsOnScreen;
+  if (timerEnabled !== undefined) session.settings.timerEnabled = Boolean(timerEnabled);
+  if (timerMinutes !== undefined) session.settings.timerMinutes = timerMinutes;
+  if (replaceCardEnabled !== undefined) session.settings.replaceCardEnabled = Boolean(replaceCardEnabled);
+  if (questionsEnabled !== undefined) session.settings.questionsEnabled = Boolean(questionsEnabled);
+  if (questions !== undefined && Array.isArray(questions)) session.questions = questions;
+
+  touchSession(session);
+
+  return res.json({
+	success: true,
+	message: 'Сессия обновлена',
+	session
+  });
+}
+
+function scheduleSession(req, res) {
+  const session = getSessionByOwner(req.params.id, req.user.id);
+
+  if (!session) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Сессия не найдена'
+	});
+  }
+
+  if (!OPEN_SESSION_STATUSES.includes(session.status)) {
+	const openedLimitCheck = ensureOpenSessionsLimit(req.user.id, session.id);
+	if (!openedLimitCheck.ok) {
+	  return res.status(400).json({
+		success: false,
+		message: openedLimitCheck.message
+	  });
+	}
+  }
+
+  session.status = 'scheduled';
+  touchSession(session);
+
+  return res.json({
+	success: true,
+	message: 'Сессия запланирована',
+	session
+  });
+}
+
+function startSession(req, res) {
+  const session = getSessionByOwner(req.params.id, req.user.id);
+
+  if (!session) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Сессия не найдена'
+	});
+  }
+
+  if (!OPEN_SESSION_STATUSES.includes(session.status)) {
+	const openedLimitCheck = ensureOpenSessionsLimit(req.user.id, session.id);
+	if (!openedLimitCheck.ok) {
+	  return res.status(400).json({
+		success: false,
+		message: openedLimitCheck.message
+	  });
+	}
+  }
+
+  session.status = 'live';
+  session.startedAt = session.startedAt || nowIso();
+  touchSession(session);
+
+  return res.json({
+	success: true,
+	message: 'Сессия начата',
+	session
+  });
+}
+
+function getSessionParticipants(req, res) {
+  const session = getSessionByOwner(req.params.id, req.user.id);
+
+  if (!session) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Сессия не найдена'
+	});
+  }
+
+  const sessionParticipants = participants.filter(
+	(item) => item.sessionId === session.id
+  );
+
+  touchSession(session);
+
+  return res.json({
+	success: true,
+	participants: sessionParticipants,
+	count: sessionParticipants.filter((item) => item.status === 'active').length
+  });
+}
+
+function kickParticipant(req, res) {
+  const session = getSessionByOwner(req.params.id, req.user.id);
+
+  if (!session) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Сессия не найдена'
+	});
+  }
+
+  const participant = participants.find(
+	(item) =>
+	  item.id === req.params.participantId &&
+	  item.sessionId === session.id
+  );
+
+  if (!participant) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Участник не найден'
+	});
+  }
+
+  participant.status = 'kicked';
+  participant.kickedAt = nowIso();
+
+  touchSession(session);
+
+  return res.json({
+	success: true,
+	message: 'Участник удалён из комнаты',
+	participant
+  });
+}
+
+function deleteSession(req, res) {
+  const sessionIndex = getSessionIndexByOwner(req.params.id, req.user.id);
+
+  if (sessionIndex === -1) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Сессия не найдена'
+	});
+  }
+
+  const sessionId = sessions[sessionIndex].id;
+  removeSessionById(sessionId);
+
   return res.json({
 	success: true,
 	message: 'Сессия завершена и удалена'
   });
 }
+
+module.exports = {
+  getSessions,
+  createSession,
+  getSessionById,
+  updateSession,
+  scheduleSession,
+  startSession,
+  getSessionParticipants,
+  kickParticipant,
+  deleteSession,
+  cleanupExpiredSessions
+};
