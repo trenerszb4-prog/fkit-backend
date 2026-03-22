@@ -7,6 +7,7 @@ const sessionRoutes = require('./routes/sessionRoutes');
 const playerRoutes = require('./routes/playerRoutes');
 const screenRoutes = require('./routes/screenRoutes');
 const { cleanupExpiredSessions } = require('./controllers/sessionController');
+const deckRoutes = require('./routes/deckRoutes');
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.use('/hub', hubRoutes);
 app.use('/sessions', sessionRoutes);
 app.use('/player', playerRoutes);
 app.use('/screen', screenRoutes);
+app.use('/decks', deckRoutes);
 
 setInterval(() => {
   try {
