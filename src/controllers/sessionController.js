@@ -247,13 +247,6 @@ function scheduleSession(req, res) {
 	});
   }
 
-  if (session.status === 'live') {
-	return res.status(400).json({
-	  success: false,
-	  message: 'Нельзя запланировать уже запущенную сессию'
-	});
-  }
-
   if (session.status === 'scheduled') {
 	touchSession(session);
 
