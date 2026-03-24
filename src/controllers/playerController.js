@@ -350,10 +350,32 @@ function recallCard(req, res) {
   });
 }
 
+function leaveSession(req, res) {
+  const { participantId } = req.params;
+
+  const participant = participants.find((item) => item.id === participantId);
+
+  if (!participant) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Участник не найден'
+	});
+  }
+
+  participant.status = 'left';
+  participant.leftAt = new Date().toISOString();
+
+  return res.json({
+	success: true,
+	message: 'Участник вышел из сессии'
+  });
+}
+
 module.exports = {
   joinByPin,
   getPlayerSession,
   getPlayerCards,
   showCard,
   recallCard
+  leaveSession
 };
