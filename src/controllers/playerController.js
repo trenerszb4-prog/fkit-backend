@@ -240,16 +240,12 @@ function showCard(req, res) {
   }
 
   const settings = session.settings || {};
-  const replaceCardEnabled = Boolean(settings.replaceCardEnabled);
   const maxCardsOnScreen = Math.max(1, Number(settings.maxCardsOnScreen || 1));
 
+  // Если режим random_subset — проверяем, что карта входит в доступный набор участника
   if (settings.cardMode === 'random_subset') {
-	const allowedCards = getOrAssignRandomCards(
-	  session,
-	  participant,
-	  deckCards.filter((item) => item.deckId === card.deckId)
-	);
-
+	const allDeckCards = deckCards.filter((item) => item.deckId === card.deckId);
+	const allowedCards = getOrAssignRandomCards(session, participant, allDeckCards);
 	const allowedCardIds = allowedCards.map((item) => item.id);
 
 	if (!allowedCardIds.includes(cardId)) {
@@ -260,26 +256,43 @@ function showCard(req, res) {
 	}
   }
 
-  const participantActiveCard = getParticipantActiveCard(session.id, participant.id);
+  const activeCards = screenCards
+	.filter((item) => item.sessionId === session.id && item.isActive)
+	.sort((a, b) => new Date(a.shownAt || 0) - new Date(b.shownAt || 0));
 
-  if (participantActiveCard) {
-	participantActiveCard.isActive = false;
-	participantActiveCard.removedAt = new Date().toISOString();
+  // 1. Если у этого участника уже есть карта на экране —
+  //    обновляем ЕГО карту, сохраняя место на экране
+  const existingParticipantCard = activeCards.find(
+	(item) => item.participantId === participant.id
+  );
+
+  if (existingParticipantCard) {
+	existingParticipantCard.deckCardId = card.id;
+	existingParticipantCard.imageUrl = card.imageUrl;
+	existingParticipantCard.participantName = participant.displayName;
+	existingParticipantCard.updatedAt = new Date().toISOString();
+
+	const timer = startOrRestartTimer(session);
+
+	return res.json({
+	  success: true,
+	  message: 'Карта участника обновлена на общем экране',
+	  screenCard: existingParticipantCard,
+	  timer: timer || null
+	});
   }
 
-  if (replaceCardEnabled) {
-	getSessionActiveCards(session.id).forEach((item) => {
-	  item.isActive = false;
-	  item.removedAt = new Date().toISOString();
-	});
-  } else {
-	const activeCards = getSessionActiveCards(session.id);
-	if (activeCards.length >= maxCardsOnScreen) {
-	  activeCards[0].isActive = false;
-	  activeCards[0].removedAt = new Date().toISOString();
+  // 2. Если участник новый для экрана, но мест уже максимум —
+  //    вытесняем самую старую карту
+  if (activeCards.length >= maxCardsOnScreen) {
+	const oldestCard = activeCards[0];
+	if (oldestCard) {
+	  oldestCard.isActive = false;
+	  oldestCard.removedAt = new Date().toISOString();
 	}
   }
 
+  // 3. Добавляем новую карту участника
   const newScreenCard = {
 	id: `sc_${Date.now()}`,
 	sessionId: session.id,
@@ -289,6 +302,7 @@ function showCard(req, res) {
 	imageUrl: card.imageUrl,
 	isActive: true,
 	shownAt: new Date().toISOString(),
+	updatedAt: null,
 	removedAt: null
   };
 

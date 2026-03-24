@@ -50,9 +50,9 @@ function getScreen(req, res) {
     (item) => item.sessionId === session.id && item.status === 'active'
   );
 
-  const activeCards = screenCards.filter(
-    (item) => item.sessionId === session.id && item.isActive
-  );
+const activeCards = screenCards
+  .filter((item) => item.sessionId === session.id && item.isActive)
+  .sort((a, b) => new Date(a.shownAt || 0) - new Date(b.shownAt || 0));
 
   const visibleCards = normalizeVisibleCards(session, activeCards);
   const deck = decks.find((item) => item.id === session.settings?.deckId) || null;
