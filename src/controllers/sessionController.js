@@ -320,8 +320,8 @@ function getSessionParticipants(req, res) {
 	});
   }
 
-  const sessionParticipants = participants.filter(
-	(item) => item.sessionId === session.id
+const sessionParticipants = participants.filter(
+	(item) => item.sessionId === session.id && item.status === 'active'
   );
 
   touchSession(session);

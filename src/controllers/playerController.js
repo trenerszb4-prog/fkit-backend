@@ -376,6 +376,6 @@ module.exports = {
   getPlayerSession,
   getPlayerCards,
   showCard,
-  recallCard
+  recallCard,
   leaveSession
 };
