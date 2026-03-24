@@ -148,6 +148,16 @@ function getPlayerSession(req, res) {
 	  message: 'Сессия не найдена'
 	});
   }
+  
+  if (session.status !== 'live') {
+	  participant.status = 'left';
+	  participant.leftAt = new Date().toISOString();
+  
+	  return res.status(403).json({
+		success: false,
+		message: 'Сессия больше не активна'
+	  });
+	}
 
   return res.json({
 	success: true,
@@ -178,6 +188,16 @@ function getPlayerCards(req, res) {
 	  message: 'Сессия не найдена'
 	});
   }
+  
+  if (session.status !== 'live') {
+	  participant.status = 'left';
+	  participant.leftAt = new Date().toISOString();
+  
+	  return res.status(403).json({
+		success: false,
+		message: 'Сессия больше не активна'
+	  });
+	}
 
   const deck = decks.find((item) => item.id === session.settings?.deckId);
 
@@ -229,6 +249,16 @@ function showCard(req, res) {
 	  message: 'Сессия не найдена'
 	});
   }
+  
+  if (session.status !== 'live') {
+	  participant.status = 'left';
+	  participant.leftAt = new Date().toISOString();
+  
+	  return res.status(403).json({
+		success: false,
+		message: 'Сессия больше не активна'
+	  });
+	}
 
   const card = deckCards.find((item) => item.id === cardId);
 
@@ -331,6 +361,25 @@ function recallCard(req, res) {
 	  message: 'Участник не найден или не активен'
 	});
   }
+  
+  const session = sessions.find((item) => item.id === participant.sessionId);
+  
+	if (!session) {
+	  return res.status(404).json({
+		success: false,
+		message: 'Сессия не найдена'
+	  });
+	}
+  
+	if (session.status !== 'live') {
+	  participant.status = 'left';
+	  participant.leftAt = new Date().toISOString();
+  
+	  return res.status(403).json({
+		success: false,
+		message: 'Сессия больше не активна'
+	  });
+	}
 
   const activeCard = getParticipantActiveCard(participant.sessionId, participant.id);
 
