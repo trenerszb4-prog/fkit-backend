@@ -292,6 +292,19 @@ function scheduleSession(req, res) {
   }
 
   session.status = 'scheduled';
+  participants.forEach((participant) => {
+	if (participant.sessionId === session.id && participant.status === 'active') {
+	  participant.status = 'left';
+	  participant.leftAt = nowIso();
+	}
+  });
+  
+  screenCards.forEach((card) => {
+	if (card.sessionId === session.id && card.isActive) {
+	  card.isActive = false;
+	  card.removedAt = nowIso();
+	}
+  });
   touchSession(session);
 
   return res.json({
@@ -327,6 +340,33 @@ function startSession(req, res) {
   }
 
   session.status = 'live';
+  // Очищаем старых участников этой сессии
+  for (let i = participants.length - 1; i >= 0; i--) {
+	if (participants[i].sessionId === session.id) {
+	  participants.splice(i, 1);
+	}
+  }
+  
+  // Очищаем старые карты экрана
+  for (let i = screenCards.length - 1; i >= 0; i--) {
+	if (screenCards[i].sessionId === session.id) {
+	  screenCards.splice(i, 1);
+	}
+  }
+  
+  // Сбрасываем таймер сессии
+  for (let i = timerStates.length - 1; i >= 0; i--) {
+	if (timerStates[i].sessionId === session.id) {
+	  timerStates.splice(i, 1);
+	}
+  }
+  
+  // Сбрасываем состояние текущего вопроса
+  for (let i = questionStates.length - 1; i >= 0; i--) {
+	if (questionStates[i].sessionId === session.id) {
+	  questionStates.splice(i, 1);
+	}
+  }
   session.startedAt = session.startedAt || nowIso();
   touchSession(session);
 
