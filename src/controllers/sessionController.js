@@ -14,6 +14,26 @@ function generatePin() {
   return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
+function isPinInUse(pinCode, excludeSessionId = null) {
+  return sessions.some((session) => {
+	if (excludeSessionId && session.id === excludeSessionId) return false;
+	return session.pinCode === pinCode;
+  });
+}
+
+function generateUniquePin(excludeSessionId = null) {
+  const maxAttempts = 100;
+
+  for (let i = 0; i < maxAttempts; i += 1) {
+	const pin = generatePin();
+	if (!isPinInUse(pin, excludeSessionId)) {
+	  return pin;
+	}
+  }
+
+  throw new Error('Не удалось сгенерировать уникальный PIN');
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -146,37 +166,43 @@ function createSession(req, res) {
   }
 
   const timestamp = nowIso();
-
-  const newSession = {
-	id: `s_${Date.now()}`,
-	ownerUserId: req.user.id,
-	serviceType: 'cards',
-	title,
-	pinCode: generatePin(),
-	status: 'scheduled',
-	settings: {
-	  deckId: deckId || 'default-deck',
-	  cardMode: cardMode || 'full_deck',
-	  randomCardsCount: randomCardsCount || 0,
-	  maxCardsOnScreen: maxCardsOnScreen || 1,
-	  timerEnabled: Boolean(timerEnabled),
-	  timerMinutes: timerMinutes || 3,
-	  replaceCardEnabled: Boolean(replaceCardEnabled),
-	  questionsEnabled: Boolean(questionsEnabled)
-	},
-	questions: Array.isArray(questions) ? questions : [],
-	createdAt: timestamp,
-	updatedAt: timestamp
-  };
-
-  sessions.push(newSession);
-
-  return res.status(201).json({
-	success: true,
-	message: 'Сессия создана',
-	session: newSession
-  });
-}
+  
+  try {
+	const newSession = {
+	  id: `s_${Date.now()}`,
+	  ownerUserId: req.user.id,
+	  serviceType: 'cards',
+	  title,
+	  pinCode: generateUniquePin(),
+	  status: 'scheduled',
+	  settings: {
+		deckId: deckId || 'default-deck',
+		cardMode: cardMode || 'full_deck',
+		randomCardsCount: randomCardsCount || 0,
+		maxCardsOnScreen: maxCardsOnScreen || 1,
+		timerEnabled: Boolean(timerEnabled),
+		timerMinutes: timerMinutes || 3,
+		replaceCardEnabled: Boolean(replaceCardEnabled),
+		questionsEnabled: Boolean(questionsEnabled)
+	  },
+	  questions: Array.isArray(questions) ? questions : [],
+	  createdAt: timestamp,
+	  updatedAt: timestamp
+	};
+  
+	sessions.push(newSession);
+  
+	return res.status(201).json({
+	  success: true,
+	  message: 'Сессия создана',
+	  session: newSession
+	});
+  } catch (error) {
+	return res.status(500).json({
+	  success: false,
+	  message: 'Не удалось создать сессию: ошибка генерации PIN'
+	});
+  }
 
 function getSessionById(req, res) {
   const session = getSessionByOwner(req.params.id, req.user.id);
