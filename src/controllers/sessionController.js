@@ -358,6 +358,18 @@ function kickParticipant(req, res) {
 
   participant.status = 'kicked';
   participant.kickedAt = nowIso();
+  
+  // Убираем активные карты этого участника с экрана
+	screenCards.forEach((card) => {
+	  if (
+		card.participantId === participant.id &&
+		card.sessionId === session.id &&
+		card.isActive
+	  ) {
+		card.isActive = false;
+		card.removedAt = nowIso();
+	  }
+	});
 
   touchSession(session);
 

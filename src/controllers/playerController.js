@@ -365,6 +365,18 @@ function leaveSession(req, res) {
   participant.status = 'left';
   participant.leftAt = new Date().toISOString();
 
+  // Убираем активные карты этого участника с экрана
+  screenCards.forEach((card) => {
+	if (
+	  card.participantId === participant.id &&
+	  card.sessionId === participant.sessionId &&
+	  card.isActive
+	) {
+	  card.isActive = false;
+	  card.removedAt = new Date().toISOString();
+	}
+  });
+
   return res.json({
 	success: true,
 	message: 'Участник вышел из сессии'
