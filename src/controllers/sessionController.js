@@ -6,6 +6,8 @@ const {
   questionStates
 } = require('../data/db');
 
+const { cleanupStaleParticipants } = require('./playerController');
+
 const OPEN_SESSION_STATUSES = ['scheduled', 'live'];
 const MAX_OPEN_SESSIONS_PER_USER = 3;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
@@ -385,6 +387,8 @@ function getSessionParticipants(req, res) {
 	  message: 'Сессия не найдена'
 	});
   }
+  
+  cleanupStaleParticipants(session.id);
 
 const sessionParticipants = participants.filter(
 	(item) => item.sessionId === session.id && item.status === 'active'

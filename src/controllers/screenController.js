@@ -5,6 +5,8 @@ const {
   decks
 } = require('../data/db');
 
+const { cleanupStaleParticipants } = require('./playerController');
+
 function getSessionOr404(req, res) {
   const session = sessions.find(
     (item) => item.id === req.params.id && item.ownerUserId === req.user.id
@@ -45,6 +47,8 @@ function normalizeVisibleCards(session, cards) {
 function getScreen(req, res) {
   const session = getSessionOr404(req, res);
   if (!session) return;
+  
+  cleanupStaleParticipants(session.id);
 
   const sessionParticipants = participants.filter(
     (item) => item.sessionId === session.id && item.status === 'active'

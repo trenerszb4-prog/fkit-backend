@@ -7,6 +7,12 @@ const {
   timerStates
 } = require('../data/db');
 
+const PARTICIPANT_HEARTBEAT_TTL_MS = 30 * 1000; // 30 секунд
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
 function generateParticipantId() {
   return `p_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 }
@@ -18,6 +24,47 @@ function getSessionByPin(pinCode) {
 	  session.status === 'live' &&
 	  session.serviceType === 'cards'
   );
+}
+
+function touchParticipant(participant) {
+  participant.lastSeenAt = nowIso();
+}
+
+function deactivateParticipantCards(participant) {
+  screenCards.forEach((card) => {
+	if (
+	  card.participantId === participant.id &&
+	  card.sessionId === participant.sessionId &&
+	  card.isActive
+	) {
+	  card.isActive = false;
+	  card.removedAt = nowIso();
+	}
+  });
+}
+
+function markParticipantLeft(participant, reason = 'left') {
+  participant.status = 'left';
+  participant.leftAt = nowIso();
+  participant.leaveReason = reason;
+  deactivateParticipantCards(participant);
+}
+
+function cleanupStaleParticipants(sessionId = null) {
+  const now = Date.now();
+
+  participants.forEach((participant) => {
+	if (participant.status !== 'active') return;
+	if (sessionId && participant.sessionId !== sessionId) return;
+
+	const lastSeen = participant.lastSeenAt || participant.joinedAt;
+	if (!lastSeen) return;
+
+	const diff = now - new Date(lastSeen).getTime();
+	if (diff > PARTICIPANT_HEARTBEAT_TTL_MS) {
+	  markParticipantLeft(participant, 'timeout');
+	}
+  });
 }
 
 function startOrRestartTimer(session) {
@@ -105,7 +152,8 @@ function joinByPin(req, res) {
 	source: source || 'browser',
 	status: 'active',
 	assignedCardIds: [],
-	joinedAt: new Date().toISOString()
+	joinedAt: nowIso(),
+	lastSeenAt: nowIso()
   };
 
   participants.push(participant);
@@ -148,16 +196,17 @@ function getPlayerSession(req, res) {
 	  message: 'Сессия не найдена'
 	});
   }
-  
+
   if (session.status !== 'live') {
-	  participant.status = 'left';
-	  participant.leftAt = new Date().toISOString();
-  
-	  return res.status(403).json({
-		success: false,
-		message: 'Сессия больше не активна'
-	  });
-	}
+	markParticipantLeft(participant, 'session_inactive');
+
+	return res.status(403).json({
+	  success: false,
+	  message: 'Сессия больше не активна'
+	});
+  }
+
+  touchParticipant(participant);
 
   return res.json({
 	success: true,
@@ -188,16 +237,17 @@ function getPlayerCards(req, res) {
 	  message: 'Сессия не найдена'
 	});
   }
-  
+
   if (session.status !== 'live') {
-	  participant.status = 'left';
-	  participant.leftAt = new Date().toISOString();
-  
-	  return res.status(403).json({
-		success: false,
-		message: 'Сессия больше не активна'
-	  });
-	}
+	markParticipantLeft(participant, 'session_inactive');
+
+	return res.status(403).json({
+	  success: false,
+	  message: 'Сессия больше не активна'
+	});
+  }
+
+  touchParticipant(participant);
 
   const deck = decks.find((item) => item.id === session.settings?.deckId);
 
@@ -249,16 +299,17 @@ function showCard(req, res) {
 	  message: 'Сессия не найдена'
 	});
   }
-  
+
   if (session.status !== 'live') {
-	  participant.status = 'left';
-	  participant.leftAt = new Date().toISOString();
-  
-	  return res.status(403).json({
-		success: false,
-		message: 'Сессия больше не активна'
-	  });
-	}
+	markParticipantLeft(participant, 'session_inactive');
+
+	return res.status(403).json({
+	  success: false,
+	  message: 'Сессия больше не активна'
+	});
+  }
+
+  touchParticipant(participant);
 
   const card = deckCards.find((item) => item.id === cardId);
 
@@ -272,7 +323,6 @@ function showCard(req, res) {
   const settings = session.settings || {};
   const maxCardsOnScreen = Math.max(1, Number(settings.maxCardsOnScreen || 1));
 
-  // Если режим random_subset — проверяем, что карта входит в доступный набор участника
   if (settings.cardMode === 'random_subset') {
 	const allDeckCards = deckCards.filter((item) => item.deckId === card.deckId);
 	const allowedCards = getOrAssignRandomCards(session, participant, allDeckCards);
@@ -290,8 +340,6 @@ function showCard(req, res) {
 	.filter((item) => item.sessionId === session.id && item.isActive)
 	.sort((a, b) => new Date(a.shownAt || 0) - new Date(b.shownAt || 0));
 
-  // 1. Если у этого участника уже есть карта на экране —
-  //    обновляем ЕГО карту, сохраняя место на экране
   const existingParticipantCard = activeCards.find(
 	(item) => item.participantId === participant.id
   );
@@ -300,7 +348,7 @@ function showCard(req, res) {
 	existingParticipantCard.deckCardId = card.id;
 	existingParticipantCard.imageUrl = card.imageUrl;
 	existingParticipantCard.participantName = participant.displayName;
-	existingParticipantCard.updatedAt = new Date().toISOString();
+	existingParticipantCard.updatedAt = nowIso();
 
 	const timer = startOrRestartTimer(session);
 
@@ -312,17 +360,14 @@ function showCard(req, res) {
 	});
   }
 
-  // 2. Если участник новый для экрана, но мест уже максимум —
-  //    вытесняем самую старую карту
   if (activeCards.length >= maxCardsOnScreen) {
 	const oldestCard = activeCards[0];
 	if (oldestCard) {
 	  oldestCard.isActive = false;
-	  oldestCard.removedAt = new Date().toISOString();
+	  oldestCard.removedAt = nowIso();
 	}
   }
 
-  // 3. Добавляем новую карту участника
   const newScreenCard = {
 	id: `sc_${Date.now()}`,
 	sessionId: session.id,
@@ -331,7 +376,7 @@ function showCard(req, res) {
 	deckCardId: card.id,
 	imageUrl: card.imageUrl,
 	isActive: true,
-	shownAt: new Date().toISOString(),
+	shownAt: nowIso(),
 	updatedAt: null,
 	removedAt: null
   };
@@ -361,25 +406,26 @@ function recallCard(req, res) {
 	  message: 'Участник не найден или не активен'
 	});
   }
-  
+
   const session = sessions.find((item) => item.id === participant.sessionId);
-  
-	if (!session) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Сессия не найдена'
-	  });
-	}
-  
-	if (session.status !== 'live') {
-	  participant.status = 'left';
-	  participant.leftAt = new Date().toISOString();
-  
-	  return res.status(403).json({
-		success: false,
-		message: 'Сессия больше не активна'
-	  });
-	}
+
+  if (!session) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Сессия не найдена'
+	});
+  }
+
+  if (session.status !== 'live') {
+	markParticipantLeft(participant, 'session_inactive');
+
+	return res.status(403).json({
+	  success: false,
+	  message: 'Сессия больше не активна'
+	});
+  }
+
+  touchParticipant(participant);
 
   const activeCard = getParticipantActiveCard(participant.sessionId, participant.id);
 
@@ -391,7 +437,7 @@ function recallCard(req, res) {
   }
 
   activeCard.isActive = false;
-  activeCard.removedAt = new Date().toISOString();
+  activeCard.removedAt = nowIso();
 
   return res.json({
 	success: true,
@@ -411,24 +457,44 @@ function leaveSession(req, res) {
 	});
   }
 
-  participant.status = 'left';
-  participant.leftAt = new Date().toISOString();
-
-  // Убираем активные карты этого участника с экрана
-  screenCards.forEach((card) => {
-	if (
-	  card.participantId === participant.id &&
-	  card.sessionId === participant.sessionId &&
-	  card.isActive
-	) {
-	  card.isActive = false;
-	  card.removedAt = new Date().toISOString();
-	}
-  });
+  markParticipantLeft(participant, 'manual_leave');
 
   return res.json({
 	success: true,
 	message: 'Участник вышел из сессии'
+  });
+}
+
+function heartbeat(req, res) {
+  const { participantId } = req.params;
+
+  const participant = participants.find(
+	(item) => item.id === participantId && item.status === 'active'
+  );
+
+  if (!participant) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Участник не найден или не активен'
+	});
+  }
+
+  const session = sessions.find((item) => item.id === participant.sessionId);
+
+  if (!session || session.status !== 'live') {
+	markParticipantLeft(participant, 'session_inactive');
+
+	return res.status(403).json({
+	  success: false,
+	  message: 'Сессия больше не активна'
+	});
+  }
+
+  touchParticipant(participant);
+
+  return res.json({
+	success: true,
+	message: 'Heartbeat принят'
   });
 }
 
@@ -438,5 +504,7 @@ module.exports = {
   getPlayerCards,
   showCard,
   recallCard,
-  leaveSession
+  leaveSession,
+  heartbeat,
+  cleanupStaleParticipants
 };
