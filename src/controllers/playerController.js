@@ -17,6 +17,74 @@ function generateParticipantId() {
   return `p_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 }
 
+function normalizeName(value) {
+  return String(value || '')
+	.trim()
+	.replace(/\s+/g, ' ')
+	.toLowerCase();
+}
+
+function looksFeminine(name) {
+  const trimmed = String(name || '').trim().toLowerCase();
+  return /[ая]$/.test(trimmed);
+}
+
+function getHumorSuffixes(name) {
+  if (looksFeminine(name)) {
+	return [
+	  'Прекрасная',
+	  'Мудрая',
+	  'Великолепная',
+	  'Очаровательная',
+	  'Легендарная',
+	  'Сияющая',
+	  'Неповторимая'
+	];
+  }
+
+  return [
+	'Великий',
+	'Мудрый',
+	'Легендарный',
+	'Несравненный',
+	'Блистательный',
+	'Доблестный',
+	'Великолепный'
+  ];
+}
+
+function makeUniqueDisplayName(sessionId, rawName) {
+  const baseName = String(rawName || '').trim().replace(/\s+/g, ' ');
+
+  const activeNames = participants
+	.filter((item) => item.sessionId === sessionId && item.status === 'active')
+	.map((item) => normalizeName(item.displayName));
+
+  if (!activeNames.includes(normalizeName(baseName))) {
+	return baseName;
+  }
+
+  const suffixes = getHumorSuffixes(baseName);
+
+  for (const suffix of suffixes) {
+	const candidate = `${baseName} ${suffix}`;
+	if (!activeNames.includes(normalizeName(candidate))) {
+	  return candidate;
+	}
+  }
+
+  let counter = 2;
+  while (true) {
+	for (const suffix of suffixes) {
+	  const candidate = `${baseName} ${suffix} ${counter}`;
+	  if (!activeNames.includes(normalizeName(candidate))) {
+		return candidate;
+	  }
+	}
+	counter += 1;
+  }
+}
+
 function getSessionByPin(pinCode) {
   return sessions.find(
 	(session) =>
@@ -148,7 +216,7 @@ function joinByPin(req, res) {
   const participant = {
 	id: generateParticipantId(),
 	sessionId: session.id,
-	displayName: name,
+	displayName: makeUniqueDisplayName(session.id, name),
 	source: source || 'browser',
 	status: 'active',
 	assignedCardIds: [],
