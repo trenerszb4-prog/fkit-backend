@@ -205,6 +205,7 @@ function createSession(req, res) {
 	  message: 'Не удалось создать сессию: ошибка генерации PIN'
 	});
   }
+  }
 
 function getSessionById(req, res) {
   const session = getSessionByOwner(req.params.id, req.user.id);
@@ -215,6 +216,8 @@ function getSessionById(req, res) {
 	  message: 'Сессия не найдена'
 	});
   }
+  
+  cleanupStaleParticipants(session.id);
 
   return res.json({
 	success: true,
