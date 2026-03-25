@@ -4,7 +4,8 @@ const {
   decks,
   deckCards,
   screenCards,
-  timerStates
+  timerStates,
+  reactions
 } = require('../data/db');
 
 const PARTICIPANT_HEARTBEAT_TTL_MS = 30 * 1000; // 30 секунд
@@ -566,6 +567,53 @@ function heartbeat(req, res) {
   });
 }
 
+function sendReaction(req, res) {
+  const { participantId } = req.params;
+  const { emoji } = req.body;
+
+  const participant = participants.find(
+	(p) => p.id === participantId && p.status === 'active'
+  );
+
+  if (!participant) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Участник не найден'
+	});
+  }
+
+  const session = sessions.find((s) => s.id === participant.sessionId);
+
+  if (!session || session.status !== 'live') {
+	return res.status(403).json({
+	  success: false,
+	  message: 'Сессия не активна'
+	});
+  }
+
+  // защита от мусора
+  const allowed = ['❤️', '👍', '😂'];
+  if (!allowed.includes(emoji)) {
+	return res.status(400).json({
+	  success: false,
+	  message: 'Недопустимая реакция'
+	});
+  }
+
+  reactions.push({
+	id: `r_${Date.now()}_${Math.random()}`,
+	sessionId: session.id,
+	participantId,
+	emoji,
+	createdAt: new Date().toISOString(),
+	isProcessed: false
+  });
+
+  return res.json({
+	success: true
+  });
+}
+
 module.exports = {
   joinByPin,
   getPlayerSession,
@@ -574,5 +622,6 @@ module.exports = {
   recallCard,
   leaveSession,
   heartbeat,
-  cleanupStaleParticipants
+  cleanupStaleParticipants,
+  sendReaction
 };

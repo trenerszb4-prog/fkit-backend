@@ -2,7 +2,8 @@ const {
   sessions,
   participants,
   screenCards,
-  decks
+  decks,
+  reactions
 } = require('../data/db');
 
 const { cleanupStaleParticipants } = require('./playerController');
@@ -123,8 +124,29 @@ function deleteScreenCard(req, res) {
   });
 }
 
+function getScreenReactions(req, res) {
+  const session = getSessionOr404(req, res);
+  if (!session) return;
+
+  const sessionReactions = reactions.filter(
+    (r) => r.sessionId === session.id && !r.isProcessed
+  );
+
+  // помечаем как обработанные
+  sessionReactions.forEach((r) => {
+    r.isProcessed = true;
+  });
+
+  return res.json({
+    success: true,
+    reactions: sessionReactions
+  });
+}
+
 module.exports = {
   getScreen,
   clearScreen,
-  deleteScreenCard
+  deleteScreenCard,
+  getScreen,
+  getScreenReactions
 };

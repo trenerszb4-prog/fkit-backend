@@ -18,4 +18,6 @@ router.post('/:id/questions/next', questionController.nextQuestion);
 router.post('/:id/questions/prev', questionController.prevQuestion);
 router.post('/:sessionId/clear', screenController.clearScreen);
 
+router.get('/:id/reactions', screenController.getScreenReactions);
+
 module.exports = router;

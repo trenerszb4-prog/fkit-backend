@@ -10,5 +10,6 @@ router.post('/:participantId/cards/show', playerController.showCard);
 router.post('/:participantId/cards/recall', playerController.recallCard);
 router.post('/:participantId/leave', playerController.leaveSession);
 router.post('/:participantId/heartbeat', playerController.heartbeat);
+router.post('/:participantId/reactions', playerController.sendReaction);
 
 module.exports = router;

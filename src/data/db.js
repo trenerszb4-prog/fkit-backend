@@ -333,6 +333,7 @@ const participants = [];
 const screenCards = [];
 const timerStates = [];
 const questionStates = [];
+const reactions = [];
 
 module.exports = {
   users,
@@ -343,5 +344,6 @@ module.exports = {
   participants,
   screenCards,
   timerStates,
-  questionStates
+  questionStates,
+  reactions
 };
