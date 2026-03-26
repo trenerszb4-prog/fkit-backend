@@ -180,6 +180,53 @@ function getOrAssignRandomCards(session, participant, cards) {
   return selected;
 }
 
+function replaceRandomAssignedCard(session, participant, currentCardId, allDeckCards) {
+  const assignedIds = Array.isArray(participant.assignedCardIds)
+	? [...participant.assignedCardIds]
+	: [];
+
+  if (!assignedIds.length) {
+	const assigned = getOrAssignRandomCards(session, participant, allDeckCards);
+	return {
+	  replaced: null,
+	  newCard: assigned[0] || null,
+	  cards: assigned
+	};
+  }
+
+  const replaceIndex = assignedIds.indexOf(currentCardId);
+  if (replaceIndex === -1) {
+	return {
+	  replaced: null,
+	  newCard: null,
+	  cards: allDeckCards.filter((card) => assignedIds.includes(card.id))
+	};
+  }
+
+  const availablePool = allDeckCards.filter(
+	(card) => !assignedIds.includes(card.id)
+  );
+
+  if (!availablePool.length) {
+	return {
+	  replaced: null,
+	  newCard: null,
+	  cards: allDeckCards.filter((card) => assignedIds.includes(card.id))
+	};
+  }
+
+  const newCard = availablePool[Math.floor(Math.random() * availablePool.length)];
+
+  assignedIds[replaceIndex] = newCard.id;
+  participant.assignedCardIds = assignedIds;
+
+  return {
+	replaced: currentCardId,
+	newCard,
+	cards: allDeckCards.filter((card) => assignedIds.includes(card.id))
+  };
+}
+
 function getParticipantActiveCard(sessionId, participantId) {
   return screenCards.find(
 	(item) =>
@@ -614,6 +661,97 @@ function sendReaction(req, res) {
   });
 }
 
+function replaceBlindCard(req, res) {
+  const { participantId } = req.params;
+  const { currentCardId } = req.body;
+
+  const participant = participants.find(
+	(item) => item.id === participantId && item.status === 'active'
+  );
+
+  if (!participant) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Участник не найден или не активен'
+	});
+  }
+
+  const session = sessions.find((item) => item.id === participant.sessionId);
+
+  if (!session) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Сессия не найдена'
+	});
+  }
+
+  if (session.status !== 'live') {
+	markParticipantLeft(participant, 'session_inactive');
+
+	return res.status(403).json({
+	  success: false,
+	  message: 'Сессия больше не активна'
+	});
+  }
+
+  const settings = session.settings || {};
+
+  if (settings.cardMode !== 'random_subset') {
+	return res.status(400).json({
+	  success: false,
+	  message: 'Замена карты доступна только в режиме "Вслепую"'
+	});
+  }
+
+  if (!settings.replaceCardEnabled) {
+	return res.status(400).json({
+	  success: false,
+	  message: 'Замена карты отключена ведущим'
+	});
+  }
+
+  if (!currentCardId) {
+	return res.status(400).json({
+	  success: false,
+	  message: 'Не указана текущая карта'
+	});
+  }
+
+  const deck = decks.find((item) => item.id === session.settings?.deckId);
+
+  if (!deck) {
+	return res.status(404).json({
+	  success: false,
+	  message: 'Колода не найдена'
+	});
+  }
+
+  const allDeckCards = deckCards.filter((item) => item.deckId === deck.id);
+
+  const result = replaceRandomAssignedCard(
+	session,
+	participant,
+	currentCardId,
+	allDeckCards
+  );
+
+  if (!result.newCard) {
+	return res.status(400).json({
+	  success: false,
+	  message: 'Не удалось заменить карту'
+	});
+  }
+
+  touchParticipant(participant);
+
+  return res.json({
+	success: true,
+	message: 'Карта заменена',
+	newCard: result.newCard,
+	cards: result.cards
+  });
+}
+
 module.exports = {
   joinByPin,
   getPlayerSession,
@@ -623,5 +761,6 @@ module.exports = {
   leaveSession,
   heartbeat,
   cleanupStaleParticipants,
-  sendReaction
+  sendReaction,
+  replaceBlindCard
 };
