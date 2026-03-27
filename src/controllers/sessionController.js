@@ -20,7 +20,6 @@ const getSessions = async (req, res) => {
 	  success: true,
 	  sessions: result.rows
 	});
-
   } catch (error) {
 	console.error('getSessions error:', error);
 	return res.status(500).json({
@@ -37,18 +36,40 @@ async function createSession(req, res) {
 	const { title, serviceType = 'cards', settings } = req.body;
 
 	if (!title) {
-	  return res.status(400).json({ success: false });
+	  return res.status(400).json({
+		success: false,
+		message: 'Не хватает обязательных данных'
+	  });
 	}
 
 	const service = await getServiceByCode(serviceType);
 
+	if (!service) {
+	  return res.status(404).json({
+		success: false,
+		message: 'Сервис не найден'
+	  });
+	}
+
 	const pinCode = await generateUniquePinCode();
 	const sessionId = `s_${Date.now()}`;
 
+	const defaultSettings = {
+	  deckId: 'deck1',
+	  cardMode: 'full_deck',
+	  randomCardsCount: 0,
+	  maxCardsOnScreen: 1,
+	  timerEnabled: false,
+	  timerMinutes: 3,
+	  replaceCardEnabled: false,
+	  questionsEnabled: false,
+	  ...(settings || {})
+	};
+
 	const result = await pool.query(
 	  `
-	  INSERT INTO sessions (id, user_id, service_id, title, pin_code, status, settings)
-	  VALUES ($1, $2, $3, $4, $5, 'scheduled', $6)
+	  INSERT INTO sessions (id, user_id, service_id, title, pin_code, status, settings, created_at, updated_at)
+	  VALUES ($1, $2, $3, $4, $5, 'scheduled', $6::jsonb, NOW(), NOW())
 	  RETURNING *
 	  `,
 	  [
@@ -57,7 +78,7 @@ async function createSession(req, res) {
 		service.id,
 		title,
 		pinCode,
-		JSON.stringify(settings || {})
+		JSON.stringify(defaultSettings)
 	  ]
 	);
 
@@ -66,8 +87,11 @@ async function createSession(req, res) {
 	  session: result.rows[0]
 	});
   } catch (e) {
-	console.error(e);
-	return res.status(500).json({ success: false });
+	console.error('createSession error:', e);
+	return res.status(500).json({
+	  success: false,
+	  message: 'Не удалось создать сессию'
+	});
   }
 }
 
@@ -76,12 +100,15 @@ async function createSession(req, res) {
 async function getSessionById(req, res) {
   try {
 	const result = await pool.query(
-	  `SELECT * FROM sessions WHERE id = $1 AND user_id = $2`,
-	  [req.params.id, USER_ID]
+	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
+	  [req.params.id]
 	);
 
 	if (!result.rows[0]) {
-	  return res.status(404).json({ success: false, message: 'Сессия не найдена' });
+	  return res.status(404).json({
+		success: false,
+		message: 'Сессия не найдена'
+	  });
 	}
 
 	return res.json({
@@ -89,7 +116,11 @@ async function getSessionById(req, res) {
 	  session: result.rows[0]
 	});
   } catch (e) {
-	return res.status(500).json({ success: false });
+	console.error('getSessionById error:', e);
+	return res.status(500).json({
+	  success: false,
+	  message: 'Не удалось получить сессию'
+	});
   }
 }
 
@@ -97,23 +128,73 @@ async function getSessionById(req, res) {
 
 async function updateSession(req, res) {
   try {
-	const { title, settings } = req.body;
+	const current = await pool.query(
+	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
+	  [req.params.id]
+	);
+
+	const session = current.rows[0];
+
+	if (!session) {
+	  return res.status(404).json({
+		success: false,
+		message: 'Сессия не найдена'
+	  });
+	}
+
+	const {
+	  title,
+	  deckId,
+	  cardMode,
+	  randomCardsCount,
+	  maxCardsOnScreen,
+	  timerEnabled,
+	  timerMinutes,
+	  replaceCardEnabled,
+	  questionsEnabled
+	} = req.body;
+
+	const nextSettings = {
+	  ...(session.settings || {})
+	};
+
+	if (deckId !== undefined) nextSettings.deckId = deckId;
+	if (cardMode !== undefined) nextSettings.cardMode = cardMode;
+	if (randomCardsCount !== undefined) nextSettings.randomCardsCount = randomCardsCount;
+	if (maxCardsOnScreen !== undefined) nextSettings.maxCardsOnScreen = maxCardsOnScreen;
+	if (timerEnabled !== undefined) nextSettings.timerEnabled = Boolean(timerEnabled);
+	if (timerMinutes !== undefined) nextSettings.timerMinutes = timerMinutes;
+	if (replaceCardEnabled !== undefined) nextSettings.replaceCardEnabled = Boolean(replaceCardEnabled);
+	if (questionsEnabled !== undefined) nextSettings.questionsEnabled = Boolean(questionsEnabled);
 
 	const result = await pool.query(
 	  `
 	  UPDATE sessions
-	  SET title = COALESCE($1, title),
-		  settings = COALESCE($2, settings),
-		  updated_at = NOW()
+	  SET
+		title = COALESCE($1, title),
+		settings = $2::jsonb,
+		updated_at = NOW()
 	  WHERE id = $3
 	  RETURNING *
 	  `,
-	  [title, settings ? JSON.stringify(settings) : null, req.params.id]
+	  [
+		title !== undefined ? title : null,
+		JSON.stringify(nextSettings),
+		req.params.id
+	  ]
 	);
 
-	return res.json({ success: true, session: result.rows[0] });
+	return res.json({
+	  success: true,
+	  message: 'Сессия обновлена',
+	  session: result.rows[0]
+	});
   } catch (e) {
-	return res.status(500).json({ success: false });
+	console.error('updateSession error:', e);
+	return res.status(500).json({
+	  success: false,
+	  message: 'Не удалось обновить сессию'
+	});
   }
 }
 
@@ -121,14 +202,57 @@ async function updateSession(req, res) {
 
 async function scheduleSession(req, res) {
   try {
-	const result = await pool.query(
-	  `UPDATE sessions SET status = 'scheduled' WHERE id = $1 RETURNING *`,
+	const check = await pool.query(
+	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
 	  [req.params.id]
 	);
 
-	return res.json({ success: true, session: result.rows[0] });
+	const session = check.rows[0];
+
+	if (!session) {
+	  return res.status(404).json({
+		success: false,
+		message: 'Сессия не найдена'
+	  });
+	}
+
+	participants.forEach((participant) => {
+	  if (participant.sessionId === session.id && participant.status === 'active') {
+		participant.status = 'left';
+		participant.leftAt = new Date().toISOString();
+	  }
+	});
+
+	screenCards.forEach((card) => {
+	  if (card.sessionId === session.id && card.isActive) {
+		card.isActive = false;
+		card.removedAt = new Date().toISOString();
+	  }
+	});
+
+	const result = await pool.query(
+	  `
+	  UPDATE sessions
+	  SET
+		status = 'scheduled',
+		updated_at = NOW()
+	  WHERE id = $1
+	  RETURNING *
+	  `,
+	  [req.params.id]
+	);
+
+	return res.json({
+	  success: true,
+	  message: 'Сессия запланирована',
+	  session: result.rows[0]
+	});
   } catch (e) {
-	return res.status(500).json({ success: false });
+	console.error('scheduleSession error:', e);
+	return res.status(500).json({
+	  success: false,
+	  message: 'Не удалось запланировать сессию'
+	});
   }
 }
 
@@ -136,24 +260,68 @@ async function scheduleSession(req, res) {
 
 async function startSession(req, res) {
   try {
-	// очищаем runtime данные
+	const check = await pool.query(
+	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
+	  [req.params.id]
+	);
+
+	const session = check.rows[0];
+
+	if (!session) {
+	  return res.status(404).json({
+		success: false,
+		message: 'Сессия не найдена'
+	  });
+	}
+
 	for (let i = participants.length - 1; i >= 0; i--) {
-	  if (participants[i].sessionId === req.params.id) participants.splice(i, 1);
+	  if (participants[i].sessionId === session.id) {
+		participants.splice(i, 1);
+	  }
+	}
+
+	for (let i = screenCards.length - 1; i >= 0; i--) {
+	  if (screenCards[i].sessionId === session.id) {
+		screenCards.splice(i, 1);
+	  }
+	}
+
+	for (let i = timerStates.length - 1; i >= 0; i--) {
+	  if (timerStates[i].sessionId === session.id) {
+		timerStates.splice(i, 1);
+	  }
+	}
+
+	for (let i = questionStates.length - 1; i >= 0; i--) {
+	  if (questionStates[i].sessionId === session.id) {
+		questionStates.splice(i, 1);
+	  }
 	}
 
 	const result = await pool.query(
 	  `
 	  UPDATE sessions
-	  SET status = 'live', started_at = NOW()
+	  SET
+		status = 'live',
+		started_at = NOW(),
+		updated_at = NOW()
 	  WHERE id = $1
 	  RETURNING *
 	  `,
 	  [req.params.id]
 	);
 
-	return res.json({ success: true, session: result.rows[0] });
+	return res.json({
+	  success: true,
+	  message: 'Сессия начата',
+	  session: result.rows[0]
+	});
   } catch (e) {
-	return res.status(500).json({ success: false });
+	console.error('startSession error:', e);
+	return res.status(500).json({
+	  success: false,
+	  message: 'Не удалось запустить сессию'
+	});
   }
 }
 
@@ -161,15 +329,36 @@ async function startSession(req, res) {
 
 async function getSessionParticipants(req, res) {
   try {
-	cleanupStaleParticipants(req.params.id);
+	const check = await pool.query(
+	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
+	  [req.params.id]
+	);
+
+	const session = check.rows[0];
+
+	if (!session) {
+	  return res.status(404).json({
+		success: false,
+		message: 'Сессия не найдена'
+	  });
+	}
+
+	cleanupStaleParticipants(session.id);
 
 	const list = participants.filter(
 	  p => p.sessionId === req.params.id && p.status === 'active'
 	);
 
-	return res.json({ success: true, participants: list });
+	return res.json({
+	  success: true,
+	  participants: list
+	});
   } catch (e) {
-	return res.status(500).json({ success: false });
+	console.error('getSessionParticipants error:', e);
+	return res.status(500).json({
+	  success: false,
+	  message: 'Не удалось получить участников'
+	});
   }
 }
 
@@ -179,13 +368,17 @@ async function deleteSession(req, res) {
   try {
 	await pool.query(`DELETE FROM sessions WHERE id = $1`, [req.params.id]);
 
-	return res.json({ success: true });
+	return res.json({
+	  success: true
+	});
   } catch (e) {
-	return res.status(500).json({ success: false });
+	console.error('deleteSession error:', e);
+	return res.status(500).json({
+	  success: false,
+	  message: 'Не удалось удалить сессию'
+	});
   }
 }
-
-// ================= EXPORT =================
 
 module.exports = {
   getSessions,
