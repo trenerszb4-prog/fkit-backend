@@ -10,7 +10,7 @@ router.use(authMiddleware);
 
 router.get('/:id', screenController.getScreen);
 router.post('/:id/clear', screenController.clearScreen);
-router.delete('/:id/cards/:screenCardId', screenController.deleteScreenCard);
+// router.delete('/:id/cards/:screenCardId', screenController.deleteScreenCard);
 router.get('/:id/timer', timerController.getSessionTimer);
 
 router.get('/:id/questions', questionController.getQuestions);
