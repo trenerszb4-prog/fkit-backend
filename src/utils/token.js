@@ -4,7 +4,7 @@ const { JWT_SECRET } = require('../config/env');
 function createToken(user) {
   return jwt.sign(
 	{
-	  userId: user.id,
+	  id: user.id, // ВАЖНО: было userId
 	  email: user.email
 	},
 	JWT_SECRET,
