@@ -225,7 +225,7 @@ async function updateSession(req, res) {
 	  });
 	}
 
-	const {
+const {
 	  title,
 	  deckId,
 	  cardMode,
@@ -234,7 +234,8 @@ async function updateSession(req, res) {
 	  timerEnabled,
 	  timerMinutes,
 	  replaceCardEnabled,
-	  questionsEnabled
+	  questionsEnabled,
+	  questions
 	} = req.body;
 
 	const nextSettings = {
@@ -249,6 +250,7 @@ async function updateSession(req, res) {
 	if (timerMinutes !== undefined) nextSettings.timerMinutes = timerMinutes;
 	if (replaceCardEnabled !== undefined) nextSettings.replaceCardEnabled = Boolean(replaceCardEnabled);
 	if (questionsEnabled !== undefined) nextSettings.questionsEnabled = Boolean(questionsEnabled);
+	if (questions !== undefined) nextSettings.questions = questions;
 
 	const result = await pool.query(
 	  `

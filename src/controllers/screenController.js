@@ -1,52 +1,105 @@
 const pool = require('../config/db');
 const { participants, screenCards, reactions } = require('../data/db');
 
-// ================= GET SCREEN =================
+function formatSession(session) {
+  return {
+    id: session.id,
+    title: session.title,
+    pinCode: session.pin_code,
+    status: session.status,
+    settings: session.settings || {},
+    createdAt: session.created_at,
+    updatedAt: session.updated_at,
+    startedAt: session.started_at
+  };
+}
+
+async function getDeckById(deckId) {
+  if (!deckId) return null;
+
+  const result = await pool.query(
+    `
+    SELECT *
+    FROM decks
+    WHERE id = $1
+      AND is_active = true
+    LIMIT 1
+    `,
+    [deckId]
+  );
+
+  return result.rows[0] || null;
+}
 
 async function getScreen(req, res) {
   try {
-    const result = await pool.query(
-      `SELECT * FROM sessions WHERE id = $1`,
+    const sessionResult = await pool.query(
+      `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
       [req.params.id]
     );
 
-    const session = result.rows[0];
+    const session = sessionResult.rows[0];
 
     if (!session) {
-      return res.status(404).json({ success: false });
+      return res.status(404).json({
+        success: false,
+        message: 'Сессия не найдена'
+      });
     }
 
-    const activeCards = screenCards.filter(
-      c => c.sessionId === session.id && c.isActive
+    const deck = await getDeckById(session.settings?.deckId);
+
+    const activeCards = screenCards
+      .filter((c) => String(c.sessionId) === String(session.id) && c.isActive)
+      .sort((a, b) => new Date(a.shownAt || 0) - new Date(b.shownAt || 0));
+
+    const sessionParticipants = participants.filter(
+      (p) => String(p.sessionId) === String(session.id) && p.status === 'active'
     );
 
     return res.json({
       success: true,
-      session,
+      session: formatSession(session),
+      deck: deck
+        ? {
+            id: deck.id,
+            title: deck.title,
+            description: deck.description,
+            backImageUrl: deck.back_image_url
+          }
+        : null,
       screenCards: activeCards,
-      participants: participants.filter(p => p.sessionId === session.id)
+      participants: sessionParticipants,
+      participantsCount: sessionParticipants.length
     });
-  } catch {
-    return res.status(500).json({ success: false });
+  } catch (error) {
+    console.error('getScreen error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Ошибка получения данных экрана'
+    });
   }
 }
 
-// ================= CLEAR =================
-
 function clearScreen(req, res) {
-  screenCards.forEach(c => {
-    if (c.sessionId === req.params.id) c.isActive = false;
+  screenCards.forEach((c) => {
+    if (String(c.sessionId) === String(req.params.id)) {
+      c.isActive = false;
+      c.removedAt = new Date().toISOString();
+    }
   });
 
   return res.json({ success: true });
 }
 
-// ================= REACTIONS =================
-
 function getScreenReactions(req, res) {
-  const list = reactions.filter(r => r.sessionId === req.params.id && !r.isProcessed);
+  const list = reactions.filter(
+    (r) => String(r.sessionId) === String(req.params.id) && !r.isProcessed
+  );
 
-  list.forEach(r => (r.isProcessed = true));
+  list.forEach((r) => {
+    r.isProcessed = true;
+  });
 
   return res.json({
     success: true,
