@@ -19,6 +19,7 @@ const playerRoutes = require('./routes/playerRoutes');
 const screenRoutes = require('./routes/screenRoutes');
 const { cleanupExpiredSessions } = require('./controllers/sessionController');
 const deckRoutes = require('./routes/deckRoutes');
+const testRoutes = require('./routes/test.routes');
 
 const app = express();
 
@@ -38,6 +39,7 @@ app.use('/sessions', sessionRoutes);
 app.use('/player', playerRoutes);
 app.use('/screen', screenRoutes);
 app.use('/decks', deckRoutes);
+app.use('/test', testRoutes);
 
 setInterval(() => {
   try {
