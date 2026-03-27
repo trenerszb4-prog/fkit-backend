@@ -8,28 +8,27 @@ const USER_ID = '1150c796-2de8-4cff-bff8-6377398f7796';
 
 // ================= GET ALL =================
 
-async function getSessions(req, res) {
+const getSessions = async (req, res) => {
   try {
-	const result = await pool.query(
-	  `
-	  SELECT s.*, sv.code AS service_type
-	  FROM sessions s
-	  JOIN services sv ON sv.id = s.service_id
-	  WHERE s.user_id = $1
-	  ORDER BY s.created_at DESC
-	  `,
-	  [USER_ID]
-	);
+	const result = await pool.query(`
+	  SELECT *
+	  FROM sessions
+	  ORDER BY created_at DESC
+	`);
 
 	return res.json({
 	  success: true,
 	  sessions: result.rows
 	});
+
   } catch (error) {
-	console.error(error);
-	return res.status(500).json({ success: false });
+	console.error('getSessions error:', error);
+	return res.status(500).json({
+	  success: false,
+	  message: 'Ошибка получения сессий'
+	});
   }
-}
+};
 
 // ================= CREATE =================
 
