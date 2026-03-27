@@ -1,152 +1,61 @@
-const {
-  sessions,
-  participants,
-  screenCards,
-  decks,
-  reactions
-} = require('../data/db');
+const pool = require('../config/db');
+const { participants, screenCards, reactions } = require('../data/db');
 
-const { cleanupStaleParticipants } = require('./playerController');
+// ================= GET SCREEN =================
 
-function getSessionOr404(req, res) {
-  const session = sessions.find(
-    (item) => item.id === req.params.id && item.ownerUserId === req.user.id
-  );
+async function getScreen(req, res) {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM sessions WHERE id = $1`,
+      [req.params.id]
+    );
 
-  if (!session) {
-    res.status(404).json({
-      success: false,
-      message: 'Сессия не найдена'
+    const session = result.rows[0];
+
+    if (!session) {
+      return res.status(404).json({ success: false });
+    }
+
+    const activeCards = screenCards.filter(
+      c => c.sessionId === session.id && c.isActive
+    );
+
+    return res.json({
+      success: true,
+      session,
+      screenCards: activeCards,
+      participants: participants.filter(p => p.sessionId === session.id)
     });
-    return null;
+  } catch {
+    return res.status(500).json({ success: false });
   }
-
-  return session;
 }
 
-function normalizeVisibleCards(session, cards) {
-  const settings = session.settings || {};
-
-  const maxCardsOnScreen = Math.max(1, Number(settings.maxCardsOnScreen || 1));
-  const replaceCardEnabled = Boolean(settings.replaceCardEnabled);
-
-  const sortedCards = [...cards].sort((a, b) => {
-    const aTime = new Date(a.shownAt || a.createdAt || a.addedAt || 0).getTime();
-    const bTime = new Date(b.shownAt || b.createdAt || b.addedAt || 0).getTime();
-    return aTime - bTime;
-  });
-
-  if (!sortedCards.length) return [];
-
-  if (replaceCardEnabled) {
-    return [sortedCards[sortedCards.length - 1]];
-  }
-
-  return sortedCards.slice(-maxCardsOnScreen);
-}
-
-function getScreen(req, res) {
-  const session = getSessionOr404(req, res);
-  if (!session) return;
-  
-  cleanupStaleParticipants(session.id);
-
-  const sessionParticipants = participants.filter(
-    (item) => item.sessionId === session.id && item.status === 'active'
-  );
-
-const activeCards = screenCards
-  .filter((item) => item.sessionId === session.id && item.isActive)
-  .sort((a, b) => new Date(a.shownAt || 0) - new Date(b.shownAt || 0));
-
-  const visibleCards = normalizeVisibleCards(session, activeCards);
-  const deck = decks.find((item) => item.id === session.settings?.deckId) || null;
-
-return res.json({
-    success: true,
-    session: {
-      id: session.id,
-      title: session.title,
-      pinCode: session.pinCode,
-      status: session.status,
-      questions: session.questions,
-      settings: session.settings
-    },
-    deck,
-    participants: sessionParticipants,
-    participantsCount: sessionParticipants.length,
-    screenCards: visibleCards
-  });
-}
+// ================= CLEAR =================
 
 function clearScreen(req, res) {
-  const session = getSessionOr404(req, res);
-  if (!session) return;
-
-  screenCards.forEach((card) => {
-    if (card.sessionId === session.id && card.isActive) {
-      card.isActive = false;
-      card.removedAt = new Date().toISOString();
-    }
+  screenCards.forEach(c => {
+    if (c.sessionId === req.params.id) c.isActive = false;
   });
 
-  return res.json({
-    success: true,
-    message: 'Экран очищен'
-  });
+  return res.json({ success: true });
 }
 
-function deleteScreenCard(req, res) {
-  const session = getSessionOr404(req, res);
-  if (!session) return;
-
-  const screenCard = screenCards.find(
-    (item) =>
-      item.id === req.params.screenCardId &&
-      item.sessionId === session.id &&
-      item.isActive
-  );
-
-  if (!screenCard) {
-    return res.status(404).json({
-      success: false,
-      message: 'Карта на экране не найдена'
-    });
-  }
-
-  screenCard.isActive = false;
-  screenCard.removedAt = new Date().toISOString();
-
-  return res.json({
-    success: true,
-    message: 'Карта удалена с общего экрана',
-    screenCard
-  });
-}
+// ================= REACTIONS =================
 
 function getScreenReactions(req, res) {
-  const session = getSessionOr404(req, res);
-  if (!session) return;
+  const list = reactions.filter(r => r.sessionId === req.params.id && !r.isProcessed);
 
-  const sessionReactions = reactions.filter(
-    (r) => r.sessionId === session.id && !r.isProcessed
-  );
-
-  // помечаем как обработанные
-  sessionReactions.forEach((r) => {
-    r.isProcessed = true;
-  });
+  list.forEach(r => (r.isProcessed = true));
 
   return res.json({
     success: true,
-    reactions: sessionReactions
+    reactions: list
   });
 }
 
 module.exports = {
   getScreen,
   clearScreen,
-  deleteScreenCard,
-  getScreen,
   getScreenReactions
 };

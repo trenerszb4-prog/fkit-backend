@@ -1,642 +1,192 @@
-const {
-  sessions,
-  participants,
-  screenCards,
-  timerStates,
-  questionStates
-} = require('../data/db');
-
-const { cleanupStaleParticipants } = require('./playerController');
-
 const pool = require('../config/db');
 const { getServiceByCode } = require('../utils/services');
 const { generateUniquePinCode } = require('../utils/pin');
+const { participants, screenCards, timerStates, questionStates } = require('../data/db');
+const { cleanupStaleParticipants } = require('./playerController');
 
-const OPEN_SESSION_STATUSES = ['scheduled', 'live'];
-const MAX_OPEN_SESSIONS_PER_USER = 3;
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
+const USER_ID = '1150c796-2de8-4cff-bff8-6377398f7796';
 
-function generatePin() {
-  return Math.floor(1000 + Math.random() * 9000).toString();
-}
-
-function isPinInUse(pinCode, excludeSessionId = null) {
-  return sessions.some((session) => {
-	if (excludeSessionId && session.id === excludeSessionId) return false;
-	return session.pinCode === pinCode;
-  });
-}
-
-function generateUniquePin(excludeSessionId = null) {
-  const maxAttempts = 100;
-
-  for (let i = 0; i < maxAttempts; i += 1) {
-	const pin = generatePin();
-	if (!isPinInUse(pin, excludeSessionId)) {
-	  return pin;
-	}
-  }
-
-  throw new Error('Не удалось сгенерировать уникальный PIN');
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function getSessionIndexByOwner(sessionId, ownerUserId) {
-  return sessions.findIndex(
-	(item) => item.id === sessionId && item.ownerUserId === ownerUserId
-  );
-}
-
-function getSessionByOwner(sessionId, ownerUserId) {
-  return sessions.find(
-	(item) => item.id === sessionId && item.ownerUserId === ownerUserId
-  );
-}
-
-function touchSession(session) {
-  session.updatedAt = nowIso();
-}
-
-function countOpenSessionsForUser(userId, excludeSessionId = null) {
-  return sessions.filter((session) => {
-	if (session.ownerUserId !== userId) return false;
-	if (excludeSessionId && session.id === excludeSessionId) return false;
-	return OPEN_SESSION_STATUSES.includes(session.status);
-  }).length;
-}
-
-function ensureOpenSessionsLimit(userId, excludeSessionId = null) {
-  const openCount = countOpenSessionsForUser(userId, excludeSessionId);
-
-  if (openCount >= MAX_OPEN_SESSIONS_PER_USER) {
-	return {
-	  ok: false,
-	  message: 'У администратора может быть не более 3 активных или запланированных сессий'
-	};
-  }
-
-  return { ok: true };
-}
-
-function removeSessionById(sessionId) {
-  const sessionIndex = sessions.findIndex((item) => item.id === sessionId);
-  if (sessionIndex === -1) return false;
-
-  sessions.splice(sessionIndex, 1);
-
-  for (let i = participants.length - 1; i >= 0; i--) {
-	if (participants[i].sessionId === sessionId) {
-	  participants.splice(i, 1);
-	}
-  }
-
-  for (let i = screenCards.length - 1; i >= 0; i--) {
-	if (screenCards[i].sessionId === sessionId) {
-	  screenCards.splice(i, 1);
-	}
-  }
-
-  for (let i = timerStates.length - 1; i >= 0; i--) {
-	if (timerStates[i].sessionId === sessionId) {
-	  timerStates.splice(i, 1);
-	}
-  }
-
-  for (let i = questionStates.length - 1; i >= 0; i--) {
-	if (questionStates[i].sessionId === sessionId) {
-	  questionStates.splice(i, 1);
-	}
-  }
-
-  return true;
-}
-
-function cleanupExpiredSessions() {
-  const now = Date.now();
-  const expiredIds = sessions
-	.filter((session) => {
-	  const baseDate = session.updatedAt || session.createdAt;
-	  if (!baseDate) return false;
-
-	  const age = now - new Date(baseDate).getTime();
-	  return age > SESSION_TTL_MS;
-	})
-	.map((session) => session.id);
-
-  expiredIds.forEach(removeSessionById);
-
-  return expiredIds.length;
-}
+// ================= GET ALL =================
 
 async function getSessions(req, res) {
   try {
 	const result = await pool.query(
 	  `
-	  SELECT
-		s.id,
-		s.title,
-		s.pin_code,
-		s.status,
-		s.settings,
-		s.created_at,
-		s.updated_at,
-		s.started_at,
-		sv.code AS service_type,
-		sv.title AS service_title
+	  SELECT s.*, sv.code AS service_type
 	  FROM sessions s
 	  JOIN services sv ON sv.id = s.service_id
 	  WHERE s.user_id = $1
 	  ORDER BY s.created_at DESC
 	  `,
-	  ['1150c796-2de8-4cff-bff8-6377398f7796']
+	  [USER_ID]
 	);
-
-	const sessions = result.rows.map((row) => ({
-	  id: row.id,
-	  title: row.title,
-	  pinCode: row.pin_code,
-	  status: row.status,
-	  settings: row.settings,
-	  createdAt: row.created_at,
-	  updatedAt: row.updated_at,
-	  startedAt: row.started_at,
-	  serviceType: row.service_type,
-	  serviceTitle: row.service_title
-	}));
 
 	return res.json({
 	  success: true,
-	  sessions
+	  sessions: result.rows
 	});
   } catch (error) {
-	console.error('Ошибка getSessions:', error);
-
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось получить список сессий'
-	});
+	console.error(error);
+	return res.status(500).json({ success: false });
   }
 }
+
+// ================= CREATE =================
 
 async function createSession(req, res) {
   try {
 	const { title, serviceType = 'cards', settings } = req.body;
 
-if (!title) {
-	  return res.status(400).json({
-		success: false,
-		message: 'Не хватает обязательных данных'
-	  });
+	if (!title) {
+	  return res.status(400).json({ success: false });
 	}
 
 	const service = await getServiceByCode(serviceType);
 
-	if (!service) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Сервис не найден'
-	  });
-	}
-
 	const pinCode = await generateUniquePinCode();
 	const sessionId = `s_${Date.now()}`;
 
-	const defaultSettings = {
-	  deckId: 'deck1',
-	  cardMode: 'full_deck',
-	  randomCardsCount: 0,
-	  maxCardsOnScreen: 1,
-	  timerEnabled: false,
-	  timerMinutes: 3,
-	  replaceCardEnabled: false,
-	  questionsEnabled: false,
-	  ...(settings || {})
-	};
-
 	const result = await pool.query(
 	  `
-	  INSERT INTO sessions (
-		id,
-		user_id,
-		service_id,
-		title,
-		pin_code,
-		status,
-		settings,
-		created_at,
-		updated_at
-	  )
-	  VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW(), NOW())
+	  INSERT INTO sessions (id, user_id, service_id, title, pin_code, status, settings)
+	  VALUES ($1, $2, $3, $4, $5, 'scheduled', $6)
 	  RETURNING *
 	  `,
 	  [
 		sessionId,
-		'1150c796-2de8-4cff-bff8-6377398f7796',
+		USER_ID,
 		service.id,
 		title,
 		pinCode,
-		'scheduled',
-		JSON.stringify(defaultSettings)
+		JSON.stringify(settings || {})
 	  ]
 	);
 
-	return res.status(201).json({
+	return res.json({
 	  success: true,
-	  session: {
-		id: result.rows[0].id,
-		title: result.rows[0].title,
-		pinCode: result.rows[0].pin_code,
-		status: result.rows[0].status,
-		serviceType,
-		settings: result.rows[0].settings,
-		createdAt: result.rows[0].created_at
-	  }
+	  session: result.rows[0]
 	});
-  } catch (error) {
-	console.error('Ошибка createSession:', error);
-
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось создать сессию'
-	});
+  } catch (e) {
+	console.error(e);
+	return res.status(500).json({ success: false });
   }
 }
 
-async function getSessionByOwnerFromDb(sessionId, ownerUserId) {
-  const result = await pool.query(
-	`
-	SELECT
-	  s.*,
-	  sv.code AS service_type,
-	  sv.title AS service_title
-	FROM sessions s
-	JOIN services sv ON sv.id = s.service_id
-	WHERE s.id = $1
-	  AND s.user_id = $2
-	LIMIT 1
-	`,
-	[sessionId, ownerUserId]
-  );
-
-  return result.rows[0] || null;
-}
+// ================= GET ONE =================
 
 async function getSessionById(req, res) {
   try {
 	const result = await pool.query(
-	  `
-	  SELECT
-		s.id,
-		s.title,
-		s.pin_code,
-		s.status,
-		s.settings,
-		s.created_at,
-		s.updated_at,
-		s.started_at,
-		sv.code AS service_type,
-		sv.title AS service_title
-	  FROM sessions s
-	  JOIN services sv ON sv.id = s.service_id
-	  WHERE s.id = $1
-		AND s.user_id = $2
-	  LIMIT 1
-	  `,
-	  [req.params.id, '1150c796-2de8-4cff-bff8-6377398f7796']
+	  `SELECT * FROM sessions WHERE id = $1 AND user_id = $2`,
+	  [req.params.id, USER_ID]
 	);
 
-	const row = result.rows[0];
-
-	if (!row) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Сессия не найдена'
-	  });
+	if (!result.rows[0]) {
+	  return res.status(404).json({ success: false, message: 'Сессия не найдена' });
 	}
 
 	return res.json({
 	  success: true,
-	  session: {
-		id: row.id,
-		title: row.title,
-		pinCode: row.pin_code,
-		status: row.status,
-		settings: row.settings,
-		createdAt: row.created_at,
-		updatedAt: row.updated_at,
-		startedAt: row.started_at,
-		serviceType: row.service_type,
-		serviceTitle: row.service_title
-	  }
+	  session: result.rows[0]
 	});
-  } catch (error) {
-	console.error('Ошибка getSessionById:', error);
-
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось получить сессию'
-	});
+  } catch (e) {
+	return res.status(500).json({ success: false });
   }
 }
+
+// ================= UPDATE =================
 
 async function updateSession(req, res) {
   try {
-	const session = await getSessionByOwnerFromDb(
-	  req.params.id,
-	  '1150c796-2de8-4cff-bff8-6377398f7796'
-	);
-
-	if (!session) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Сессия не найдена'
-	  });
-	}
-
-	const {
-	  title,
-	  deckId,
-	  cardMode,
-	  randomCardsCount,
-	  maxCardsOnScreen,
-	  timerEnabled,
-	  timerMinutes,
-	  questions,
-	  replaceCardEnabled,
-	  questionsEnabled
-	} = req.body;
-
-	const nextSettings = {
-	  ...(session.settings || {})
-	};
-
-	if (deckId !== undefined) nextSettings.deckId = deckId;
-	if (cardMode !== undefined) nextSettings.cardMode = cardMode;
-	if (randomCardsCount !== undefined) nextSettings.randomCardsCount = randomCardsCount;
-	if (maxCardsOnScreen !== undefined) nextSettings.maxCardsOnScreen = maxCardsOnScreen;
-	if (timerEnabled !== undefined) nextSettings.timerEnabled = Boolean(timerEnabled);
-	if (timerMinutes !== undefined) nextSettings.timerMinutes = timerMinutes;
-	if (replaceCardEnabled !== undefined) nextSettings.replaceCardEnabled = Boolean(replaceCardEnabled);
-	if (questionsEnabled !== undefined) nextSettings.questionsEnabled = Boolean(questionsEnabled);
+	const { title, settings } = req.body;
 
 	const result = await pool.query(
 	  `
 	  UPDATE sessions
-	  SET
-		title = COALESCE($1, title),
-		settings = $2::jsonb,
-		updated_at = NOW()
+	  SET title = COALESCE($1, title),
+		  settings = COALESCE($2, settings),
+		  updated_at = NOW()
 	  WHERE id = $3
 	  RETURNING *
 	  `,
-	  [
-		title !== undefined ? title : null,
-		JSON.stringify(nextSettings),
-		req.params.id
-	  ]
+	  [title, settings ? JSON.stringify(settings) : null, req.params.id]
 	);
 
-	return res.json({
-	  success: true,
-	  message: 'Сессия обновлена',
-	  session: result.rows[0]
-	});
-  } catch (error) {
-	console.error('Ошибка updateSession:', error);
-
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось обновить сессию'
-	});
+	return res.json({ success: true, session: result.rows[0] });
+  } catch (e) {
+	return res.status(500).json({ success: false });
   }
 }
 
-function scheduleSession(req, res) {
-  const session = getSessionByOwner(req.params.id, req.user.id);
+// ================= SCHEDULE =================
 
-  if (!session) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
+async function scheduleSession(req, res) {
+  try {
+	const result = await pool.query(
+	  `UPDATE sessions SET status = 'scheduled' WHERE id = $1 RETURNING *`,
+	  [req.params.id]
+	);
+
+	return res.json({ success: true, session: result.rows[0] });
+  } catch (e) {
+	return res.status(500).json({ success: false });
   }
-
-  if (session.status === 'scheduled') {
-	touchSession(session);
-
-	return res.json({
-	  success: true,
-	  message: 'Сессия уже запланирована',
-	  session
-	});
-  }
-
-  const openedLimitCheck = ensureOpenSessionsLimit(req.user.id, session.id);
-  if (!openedLimitCheck.ok) {
-	return res.status(400).json({
-	  success: false,
-	  message: openedLimitCheck.message
-	});
-  }
-
-  session.status = 'scheduled';
-  participants.forEach((participant) => {
-	if (participant.sessionId === session.id && participant.status === 'active') {
-	  participant.status = 'left';
-	  participant.leftAt = nowIso();
-	}
-  });
-  
-  screenCards.forEach((card) => {
-	if (card.sessionId === session.id && card.isActive) {
-	  card.isActive = false;
-	  card.removedAt = nowIso();
-	}
-  });
-  touchSession(session);
-
-  return res.json({
-	success: true,
-	message: 'Сессия запланирована',
-	session
-  });
 }
+
+// ================= START =================
 
 async function startSession(req, res) {
   try {
-	const session = await getSessionByOwnerFromDb(
-	  req.params.id,
-	  '1150c796-2de8-4cff-bff8-6377398f7796'
-	);
-
-	if (!session) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Сессия не найдена'
-	  });
-	}
-
-	if (session.status === 'live') {
-	  return res.status(400).json({
-		success: false,
-		message: 'Сессия уже запущена'
-	  });
-	}
-
+	// очищаем runtime данные
 	for (let i = participants.length - 1; i >= 0; i--) {
-	  if (participants[i].sessionId === session.id) {
-		participants.splice(i, 1);
-	  }
-	}
-
-	for (let i = screenCards.length - 1; i >= 0; i--) {
-	  if (screenCards[i].sessionId === session.id) {
-		screenCards.splice(i, 1);
-	  }
-	}
-
-	for (let i = timerStates.length - 1; i >= 0; i--) {
-	  if (timerStates[i].sessionId === session.id) {
-		timerStates.splice(i, 1);
-	  }
-	}
-
-	for (let i = questionStates.length - 1; i >= 0; i--) {
-	  if (questionStates[i].sessionId === session.id) {
-		questionStates.splice(i, 1);
-	  }
+	  if (participants[i].sessionId === req.params.id) participants.splice(i, 1);
 	}
 
 	const result = await pool.query(
 	  `
 	  UPDATE sessions
-	  SET
-		status = 'live',
-		started_at = COALESCE(started_at, NOW()),
-		updated_at = NOW()
+	  SET status = 'live', started_at = NOW()
 	  WHERE id = $1
 	  RETURNING *
 	  `,
 	  [req.params.id]
 	);
 
-	return res.json({
-	  success: true,
-	  message: 'Сессия начата',
-	  session: result.rows[0]
-	});
-  } catch (error) {
-	console.error('Ошибка startSession:', error);
-
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось запустить сессию'
-	});
+	return res.json({ success: true, session: result.rows[0] });
+  } catch (e) {
+	return res.status(500).json({ success: false });
   }
 }
+
+// ================= PARTICIPANTS =================
+
 async function getSessionParticipants(req, res) {
   try {
-	const session = await getSessionByOwnerFromDb(
-	  req.params.id,
-	  '1150c796-2de8-4cff-bff8-6377398f7796'
+	cleanupStaleParticipants(req.params.id);
+
+	const list = participants.filter(
+	  p => p.sessionId === req.params.id && p.status === 'active'
 	);
 
-	if (!session) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Сессия не найдена'
-	  });
-	}
-
-	cleanupStaleParticipants(session.id);
-
-	const sessionParticipants = participants.filter(
-	  (item) => item.sessionId === session.id && item.status === 'active'
-	);
-
-	return res.json({
-	  success: true,
-	  participants: sessionParticipants,
-	  count: sessionParticipants.length
-	});
-  } catch (error) {
-	console.error('Ошибка getSessionParticipants:', error);
-
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось получить участников'
-	});
+	return res.json({ success: true, participants: list });
+  } catch (e) {
+	return res.status(500).json({ success: false });
   }
 }
 
-function kickParticipant(req, res) {
-  const session = getSessionByOwner(req.params.id, req.user.id);
+// ================= DELETE =================
 
-  if (!session) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
+async function deleteSession(req, res) {
+  try {
+	await pool.query(`DELETE FROM sessions WHERE id = $1`, [req.params.id]);
+
+	return res.json({ success: true });
+  } catch (e) {
+	return res.status(500).json({ success: false });
   }
-
-  const participant = participants.find(
-	(item) =>
-	  item.id === req.params.participantId &&
-	  item.sessionId === session.id
-  );
-
-  if (!participant) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Участник не найден'
-	});
-  }
-
-  participant.status = 'kicked';
-  participant.kickedAt = nowIso();
-  
-  // Убираем активные карты этого участника с экрана
-	screenCards.forEach((card) => {
-	  if (
-		card.participantId === participant.id &&
-		card.sessionId === session.id &&
-		card.isActive
-	  ) {
-		card.isActive = false;
-		card.removedAt = nowIso();
-	  }
-	});
-
-  touchSession(session);
-
-  return res.json({
-	success: true,
-	message: 'Участник удалён из комнаты',
-	participant
-  });
 }
 
-function deleteSession(req, res) {
-  const sessionIndex = getSessionIndexByOwner(req.params.id, req.user.id);
-
-  if (sessionIndex === -1) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
-  }
-
-  const sessionId = sessions[sessionIndex].id;
-  removeSessionById(sessionId);
-
-  return res.json({
-	success: true,
-	message: 'Сессия завершена и удалена'
-  });
-}
+// ================= EXPORT =================
 
 module.exports = {
   getSessions,
@@ -646,7 +196,5 @@ module.exports = {
   scheduleSession,
   startSession,
   getSessionParticipants,
-  kickParticipant,
-  deleteSession,
-  cleanupExpiredSessions
+  deleteSession
 };
