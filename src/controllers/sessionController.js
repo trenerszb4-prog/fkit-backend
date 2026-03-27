@@ -131,15 +131,54 @@ function cleanupExpiredSessions() {
   return expiredIds.length;
 }
 
-function getSessions(req, res) {
-  const userSessions = sessions.filter(
-	(session) => session.ownerUserId === req.user.id
-  );
+async function getSessions(req, res) {
+  try {
+	const result = await pool.query(
+	  `
+	  SELECT
+		s.id,
+		s.title,
+		s.pin_code,
+		s.status,
+		s.settings,
+		s.created_at,
+		s.updated_at,
+		s.started_at,
+		sv.code AS service_type,
+		sv.title AS service_title
+	  FROM sessions s
+	  JOIN services sv ON sv.id = s.service_id
+	  WHERE s.user_id = $1
+	  ORDER BY s.created_at DESC
+	  `,
+	  ['1150c796-2de8-4cff-bff8-6377398f7796']
+	);
 
-  return res.json({
-	success: true,
-	sessions: userSessions
-  });
+	const sessions = result.rows.map((row) => ({
+	  id: row.id,
+	  title: row.title,
+	  pinCode: row.pin_code,
+	  status: row.status,
+	  settings: row.settings,
+	  createdAt: row.created_at,
+	  updatedAt: row.updated_at,
+	  startedAt: row.started_at,
+	  serviceType: row.service_type,
+	  serviceTitle: row.service_title
+	}));
+
+	return res.json({
+	  success: true,
+	  sessions
+	});
+  } catch (error) {
+	console.error('Ошибка getSessions:', error);
+
+	return res.status(500).json({
+	  success: false,
+	  message: 'Не удалось получить список сессий'
+	});
+  }
 }
 
 async function createSession(req, res) {
@@ -225,22 +264,62 @@ if (!title) {
 	});
   }
 }
-function getSessionById(req, res) {
-  const session = getSessionByOwner(req.params.id, req.user.id);
+async function getSessionById(req, res) {
+  try {
+	const result = await pool.query(
+	  `
+	  SELECT
+		s.id,
+		s.title,
+		s.pin_code,
+		s.status,
+		s.settings,
+		s.created_at,
+		s.updated_at,
+		s.started_at,
+		sv.code AS service_type,
+		sv.title AS service_title
+	  FROM sessions s
+	  JOIN services sv ON sv.id = s.service_id
+	  WHERE s.id = $1
+		AND s.user_id = $2
+	  LIMIT 1
+	  `,
+	  [req.params.id, '1150c796-2de8-4cff-bff8-6377398f7796']
+	);
 
-  if (!session) {
-	return res.status(404).json({
+	const row = result.rows[0];
+
+	if (!row) {
+	  return res.status(404).json({
+		success: false,
+		message: 'Сессия не найдена'
+	  });
+	}
+
+	return res.json({
+	  success: true,
+	  session: {
+		id: row.id,
+		title: row.title,
+		pinCode: row.pin_code,
+		status: row.status,
+		settings: row.settings,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at,
+		startedAt: row.started_at,
+		serviceType: row.service_type,
+		serviceTitle: row.service_title
+	  }
+	});
+  } catch (error) {
+	console.error('Ошибка getSessionById:', error);
+
+	return res.status(500).json({
 	  success: false,
-	  message: 'Сессия не найдена'
+	  message: 'Не удалось получить сессию'
 	});
   }
-  
-  cleanupStaleParticipants(session.id);
-
-  return res.json({
-	success: true,
-	session
-  });
 }
 
 function updateSession(req, res) {
