@@ -1,31 +1,28 @@
 const jwt = require('jsonwebtoken');
+const pool = require('../config/db');
 const { JWT_SECRET } = require('../config/env');
-const { users } = require('../data/db');
 
-function authMiddleware(req, res, next) {
+async function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
 	return res.status(401).json({
 	  success: false,
-	  message: 'Нет токена доступа'
+	  message: 'Нет токена'
 	});
   }
 
-  const parts = authHeader.split(' ');
-  const token = parts[1];
-
-  if (!token) {
-	return res.status(401).json({
-	  success: false,
-	  message: 'Неверный формат токена'
-	});
-  }
+  const token = authHeader.split(' ')[1];
 
   try {
 	const decoded = jwt.verify(token, JWT_SECRET);
 
-	const user = users.find((item) => item.id === decoded.userId);
+	const result = await pool.query(
+	  `SELECT id, name, email FROM users WHERE id = $1`,
+	  [decoded.userId]
+	);
+
+	const user = result.rows[0];
 
 	if (!user) {
 	  return res.status(401).json({
@@ -36,6 +33,7 @@ function authMiddleware(req, res, next) {
 
 	req.user = user;
 	next();
+
   } catch (error) {
 	return res.status(401).json({
 	  success: false,
