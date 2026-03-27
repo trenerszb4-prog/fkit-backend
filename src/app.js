@@ -1,5 +1,16 @@
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
+const pool = require('./config/db');
+
+pool.query('SELECT NOW()')
+  .then((result) => {
+	console.log('База подключена:', result.rows[0]);
+  })
+  .catch((error) => {
+	console.error('Ошибка подключения к базе:', error.message);
+  });
 
 const authRoutes = require('./routes/authRoutes');
 const hubRoutes = require('./routes/hubRoutes');
