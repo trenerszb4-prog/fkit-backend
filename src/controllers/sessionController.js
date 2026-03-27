@@ -8,6 +8,10 @@ const {
 
 const { cleanupStaleParticipants } = require('./playerController');
 
+const pool = require('../config/db');
+const { getServiceByCode } = require('../utils/services');
+const { generateUniquePinCode } = require('../utils/pin');
+
 const OPEN_SESSION_STATUSES = ['scheduled', 'live'];
 const MAX_OPEN_SESSIONS_PER_USER = 3;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
@@ -138,75 +142,89 @@ function getSessions(req, res) {
   });
 }
 
-function createSession(req, res) {
-  const {
-	title,
-	deckId,
-	cardMode,
-	randomCardsCount,
-	maxCardsOnScreen,
-	timerEnabled,
-	timerMinutes,
-	questions,
-	replaceCardEnabled,
-	questionsEnabled
-  } = req.body;
-
-  if (!title) {
-	return res.status(400).json({
-	  success: false,
-	  message: 'Название сессии обязательно'
-	});
-  }
-
-  const openedLimitCheck = ensureOpenSessionsLimit(req.user.id);
-  if (!openedLimitCheck.ok) {
-	return res.status(400).json({
-	  success: false,
-	  message: openedLimitCheck.message
-	});
-  }
-
-  const timestamp = nowIso();
-  
+async function createSession(req, res) {
   try {
-	const newSession = {
-	  id: `s_${Date.now()}`,
-	  ownerUserId: req.user.id,
-	  serviceType: 'cards',
-	  title,
-	  pinCode: generateUniquePin(),
-	  status: 'scheduled',
-	  settings: {
-		deckId: deckId || 'default-deck',
-		cardMode: cardMode || 'full_deck',
-		randomCardsCount: randomCardsCount || 0,
-		maxCardsOnScreen: maxCardsOnScreen || 1,
-		timerEnabled: Boolean(timerEnabled),
-		timerMinutes: timerMinutes || 3,
-		replaceCardEnabled: Boolean(replaceCardEnabled),
-		questionsEnabled: Boolean(questionsEnabled)
-	  },
-	  questions: Array.isArray(questions) ? questions : [],
-	  createdAt: timestamp,
-	  updatedAt: timestamp
+	const { title, serviceType, settings } = req.body;
+
+	if (!title || !serviceType) {
+	  return res.status(400).json({
+		success: false,
+		message: 'Не хватает обязательных данных'
+	  });
+	}
+
+	const service = await getServiceByCode(serviceType);
+
+	if (!service) {
+	  return res.status(404).json({
+		success: false,
+		message: 'Сервис не найден'
+	  });
+	}
+
+	const pinCode = await generateUniquePinCode();
+	const sessionId = `s_${Date.now()}`;
+
+	const defaultSettings = {
+	  deckId: 'deck1',
+	  cardMode: 'full_deck',
+	  randomCardsCount: 0,
+	  maxCardsOnScreen: 1,
+	  timerEnabled: false,
+	  timerMinutes: 3,
+	  replaceCardEnabled: false,
+	  questionsEnabled: false,
+	  ...(settings || {})
 	};
-  
-	sessions.push(newSession);
-  
+
+	const result = await pool.query(
+	  `
+	  INSERT INTO sessions (
+		id,
+		user_id,
+		service_id,
+		title,
+		pin_code,
+		status,
+		settings,
+		created_at,
+		updated_at
+	  )
+	  VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW(), NOW())
+	  RETURNING *
+	  `,
+	  [
+		sessionId,
+		'1150c796-2de8-4cff-bff8-6377398f7796',
+		service.id,
+		title,
+		pinCode,
+		'scheduled',
+		JSON.stringify(defaultSettings)
+	  ]
+	);
+
 	return res.status(201).json({
 	  success: true,
-	  message: 'Сессия создана',
-	  session: newSession
+	  session: {
+		id: result.rows[0].id,
+		title: result.rows[0].title,
+		pinCode: result.rows[0].pin_code,
+		status: result.rows[0].status,
+		serviceType,
+		settings: result.rows[0].settings,
+		createdAt: result.rows[0].created_at
+	  }
 	});
   } catch (error) {
+	console.error('Ошибка createSession:', error);
+
 	return res.status(500).json({
 	  success: false,
-	  message: 'Не удалось создать сессию: ошибка генерации PIN'
+	  message: 'Не удалось создать сессию'
 	});
   }
-  }
-
+}
 function getSessionById(req, res) {
   const session = getSessionByOwner(req.params.id, req.user.id);
 
