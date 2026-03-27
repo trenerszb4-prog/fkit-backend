@@ -82,9 +82,19 @@ async function createSession(req, res) {
 	  ]
 	);
 
+const row = result.rows[0];
+	
 	return res.json({
 	  success: true,
-	  session: result.rows[0]
+	  session: {
+		id: row.id,
+		title: row.title,
+		pinCode: row.pin_code,
+		status: row.status,
+		settings: row.settings,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at
+	  }
 	});
   } catch (e) {
 	console.error('createSession error:', e);
