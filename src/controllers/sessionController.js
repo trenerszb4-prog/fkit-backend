@@ -144,9 +144,9 @@ function getSessions(req, res) {
 
 async function createSession(req, res) {
   try {
-	const { title, serviceType, settings } = req.body;
+	const { title, serviceType = 'cards', settings } = req.body;
 
-	if (!title || !serviceType) {
+if (!title) {
 	  return res.status(400).json({
 		success: false,
 		message: 'Не хватает обязательных данных'
