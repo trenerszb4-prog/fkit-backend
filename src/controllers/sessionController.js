@@ -4,21 +4,74 @@ const { generateUniquePinCode } = require('../utils/pin');
 const { participants, screenCards, timerStates, questionStates } = require('../data/db');
 const { cleanupStaleParticipants } = require('./playerController');
 
-const USER_ID = '1150c796-2de8-4cff-bff8-6377398f7796';
+const OPEN_SESSION_STATUSES = ['scheduled', 'live'];
+const MAX_OPEN_SESSIONS_PER_USER = 3;
+
+function formatSession(row) {
+  if (!row) return null;
+
+  return {
+	id: row.id,
+	title: row.title,
+	pinCode: row.pin_code,
+	status: row.status,
+	settings: row.settings || {},
+	createdAt: row.created_at,
+	updatedAt: row.updated_at,
+	startedAt: row.started_at,
+	userId: row.user_id,
+	serviceId: row.service_id
+  };
+}
+
+async function countOpenSessionsForUser(userId, excludeSessionId = null) {
+  const params = [userId, OPEN_SESSION_STATUSES];
+  let query = `
+	SELECT COUNT(*)::int AS count
+	FROM sessions
+	WHERE user_id = $1
+	  AND status = ANY($2)
+  `;
+
+  if (excludeSessionId) {
+	params.push(excludeSessionId);
+	query += ` AND id <> $3`;
+  }
+
+  const result = await pool.query(query, params);
+  return result.rows[0]?.count || 0;
+}
+
+async function ensureOpenSessionsLimit(userId, excludeSessionId = null) {
+  const openCount = await countOpenSessionsForUser(userId, excludeSessionId);
+
+  if (openCount >= MAX_OPEN_SESSIONS_PER_USER) {
+	return {
+	  ok: false,
+	  message: 'У администратора может быть не более 3 активных или запланированных сессий'
+	};
+  }
+
+  return { ok: true };
+}
 
 // ================= GET ALL =================
 
-const getSessions = async (req, res) => {
+async function getSessions(req, res) {
   try {
-	const result = await pool.query(`
+	const result = await pool.query(
+	  `
 	  SELECT *
 	  FROM sessions
+	  WHERE user_id = $1
 	  ORDER BY created_at DESC
-	`);
+	  `,
+	  [req.user.id]
+	);
 
 	return res.json({
 	  success: true,
-	  sessions: result.rows
+	  sessions: result.rows.map(formatSession)
 	});
   } catch (error) {
 	console.error('getSessions error:', error);
@@ -27,7 +80,7 @@ const getSessions = async (req, res) => {
 	  message: 'Ошибка получения сессий'
 	});
   }
-};
+}
 
 // ================= CREATE =================
 
@@ -39,6 +92,14 @@ async function createSession(req, res) {
 	  return res.status(400).json({
 		success: false,
 		message: 'Не хватает обязательных данных'
+	  });
+	}
+
+	const limitCheck = await ensureOpenSessionsLimit(req.user.id);
+	if (!limitCheck.ok) {
+	  return res.status(400).json({
+		success: false,
+		message: limitCheck.message
 	  });
 	}
 
@@ -68,13 +129,23 @@ async function createSession(req, res) {
 
 	const result = await pool.query(
 	  `
-	  INSERT INTO sessions (id, user_id, service_id, title, pin_code, status, settings, created_at, updated_at)
+	  INSERT INTO sessions (
+		id,
+		user_id,
+		service_id,
+		title,
+		pin_code,
+		status,
+		settings,
+		created_at,
+		updated_at
+	  )
 	  VALUES ($1, $2, $3, $4, $5, 'scheduled', $6::jsonb, NOW(), NOW())
 	  RETURNING *
 	  `,
 	  [
 		sessionId,
-		USER_ID,
+		req.user.id,
 		service.id,
 		title,
 		pinCode,
@@ -82,19 +153,9 @@ async function createSession(req, res) {
 	  ]
 	);
 
-const row = result.rows[0];
-	
 	return res.json({
 	  success: true,
-	  session: {
-		id: row.id,
-		title: row.title,
-		pinCode: row.pin_code,
-		status: row.status,
-		settings: row.settings,
-		createdAt: row.created_at,
-		updatedAt: row.updated_at
-	  }
+	  session: formatSession(result.rows[0])
 	});
   } catch (e) {
 	console.error('createSession error:', e);
@@ -110,8 +171,14 @@ const row = result.rows[0];
 async function getSessionById(req, res) {
   try {
 	const result = await pool.query(
-	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
-	  [req.params.id]
+	  `
+	  SELECT *
+	  FROM sessions
+	  WHERE id = $1
+		AND user_id = $2
+	  LIMIT 1
+	  `,
+	  [req.params.id, req.user.id]
 	);
 
 	if (!result.rows[0]) {
@@ -123,7 +190,7 @@ async function getSessionById(req, res) {
 
 	return res.json({
 	  success: true,
-	  session: result.rows[0]
+	  session: formatSession(result.rows[0])
 	});
   } catch (e) {
 	console.error('getSessionById error:', e);
@@ -139,8 +206,14 @@ async function getSessionById(req, res) {
 async function updateSession(req, res) {
   try {
 	const current = await pool.query(
-	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
-	  [req.params.id]
+	  `
+	  SELECT *
+	  FROM sessions
+	  WHERE id = $1
+		AND user_id = $2
+	  LIMIT 1
+	  `,
+	  [req.params.id, req.user.id]
 	);
 
 	const session = current.rows[0];
@@ -185,19 +258,21 @@ async function updateSession(req, res) {
 		settings = $2::jsonb,
 		updated_at = NOW()
 	  WHERE id = $3
+		AND user_id = $4
 	  RETURNING *
 	  `,
 	  [
 		title !== undefined ? title : null,
 		JSON.stringify(nextSettings),
-		req.params.id
+		req.params.id,
+		req.user.id
 	  ]
 	);
 
 	return res.json({
 	  success: true,
 	  message: 'Сессия обновлена',
-	  session: result.rows[0]
+	  session: formatSession(result.rows[0])
 	});
   } catch (e) {
 	console.error('updateSession error:', e);
@@ -213,8 +288,14 @@ async function updateSession(req, res) {
 async function scheduleSession(req, res) {
   try {
 	const check = await pool.query(
-	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
-	  [req.params.id]
+	  `
+	  SELECT *
+	  FROM sessions
+	  WHERE id = $1
+		AND user_id = $2
+	  LIMIT 1
+	  `,
+	  [req.params.id, req.user.id]
 	);
 
 	const session = check.rows[0];
@@ -224,6 +305,16 @@ async function scheduleSession(req, res) {
 		success: false,
 		message: 'Сессия не найдена'
 	  });
+	}
+
+	if (session.status !== 'scheduled') {
+	  const limitCheck = await ensureOpenSessionsLimit(req.user.id, session.id);
+	  if (!limitCheck.ok) {
+		return res.status(400).json({
+		  success: false,
+		  message: limitCheck.message
+		});
+	  }
 	}
 
 	participants.forEach((participant) => {
@@ -247,15 +338,16 @@ async function scheduleSession(req, res) {
 		status = 'scheduled',
 		updated_at = NOW()
 	  WHERE id = $1
+		AND user_id = $2
 	  RETURNING *
 	  `,
-	  [req.params.id]
+	  [req.params.id, req.user.id]
 	);
 
 	return res.json({
 	  success: true,
 	  message: 'Сессия запланирована',
-	  session: result.rows[0]
+	  session: formatSession(result.rows[0])
 	});
   } catch (e) {
 	console.error('scheduleSession error:', e);
@@ -271,8 +363,14 @@ async function scheduleSession(req, res) {
 async function startSession(req, res) {
   try {
 	const check = await pool.query(
-	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
-	  [req.params.id]
+	  `
+	  SELECT *
+	  FROM sessions
+	  WHERE id = $1
+		AND user_id = $2
+	  LIMIT 1
+	  `,
+	  [req.params.id, req.user.id]
 	);
 
 	const session = check.rows[0];
@@ -316,15 +414,16 @@ async function startSession(req, res) {
 		started_at = NOW(),
 		updated_at = NOW()
 	  WHERE id = $1
+		AND user_id = $2
 	  RETURNING *
 	  `,
-	  [req.params.id]
+	  [req.params.id, req.user.id]
 	);
 
 	return res.json({
 	  success: true,
 	  message: 'Сессия начата',
-	  session: result.rows[0]
+	  session: formatSession(result.rows[0])
 	});
   } catch (e) {
 	console.error('startSession error:', e);
@@ -340,8 +439,14 @@ async function startSession(req, res) {
 async function getSessionParticipants(req, res) {
   try {
 	const check = await pool.query(
-	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
-	  [req.params.id]
+	  `
+	  SELECT *
+	  FROM sessions
+	  WHERE id = $1
+		AND user_id = $2
+	  LIMIT 1
+	  `,
+	  [req.params.id, req.user.id]
 	);
 
 	const session = check.rows[0];
@@ -356,7 +461,7 @@ async function getSessionParticipants(req, res) {
 	cleanupStaleParticipants(session.id);
 
 	const list = participants.filter(
-	  p => p.sessionId === req.params.id && p.status === 'active'
+	  (p) => p.sessionId === req.params.id && p.status === 'active'
 	);
 
 	return res.json({
@@ -376,7 +481,14 @@ async function getSessionParticipants(req, res) {
 
 async function deleteSession(req, res) {
   try {
-	await pool.query(`DELETE FROM sessions WHERE id = $1`, [req.params.id]);
+	await pool.query(
+	  `
+	  DELETE FROM sessions
+	  WHERE id = $1
+		AND user_id = $2
+	  `,
+	  [req.params.id, req.user.id]
+	);
 
 	return res.json({
 	  success: true
