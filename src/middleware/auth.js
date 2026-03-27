@@ -12,14 +12,30 @@ async function authMiddleware(req, res, next) {
 	});
   }
 
-  const token = authHeader.split(' ')[1];
+  const parts = authHeader.split(' ');
+  const token = parts[1];
+
+  if (!token) {
+	return res.status(401).json({
+	  success: false,
+	  message: 'Неверный формат токена'
+	});
+  }
 
   try {
 	const decoded = jwt.verify(token, JWT_SECRET);
 
+	const userId = decoded.id;
+	if (!userId) {
+	  return res.status(401).json({
+		success: false,
+		message: 'Токен недействителен'
+	  });
+	}
+
 	const result = await pool.query(
-	  `SELECT id, name, email FROM users WHERE id = $1`,
-	  [decoded.userId]
+	  `SELECT id, email, display_name FROM users WHERE id = $1 LIMIT 1`,
+	  [userId]
 	);
 
 	const user = result.rows[0];
@@ -31,10 +47,15 @@ async function authMiddleware(req, res, next) {
 	  });
 	}
 
-	req.user = user;
-	next();
+	req.user = {
+	  id: user.id,
+	  email: user.email,
+	  name: user.display_name || 'Vitalii'
+	};
 
+	next();
   } catch (error) {
+	console.error('AUTH ERROR:', error.message);
 	return res.status(401).json({
 	  success: false,
 	  message: 'Токен недействителен'
