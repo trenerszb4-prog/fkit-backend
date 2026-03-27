@@ -1,11 +1,10 @@
-const { sessions, timerStates } = require('../data/db');
+const pool = require('../config/db');
+const { timerStates } = require('../data/db');
 
 function getTimerVisualState(timer) {
   const now = Date.now();
 
-  if (!timer || timer.state === 'idle') {
-	return 'idle';
-  }
+  if (!timer || timer.state === 'idle') return 'idle';
 
   if (timer.endsAt && now >= new Date(timer.endsAt).getTime()) {
 	return 'expired';
@@ -18,41 +17,50 @@ function getTimerBySessionId(sessionId) {
   return timerStates.find((item) => item.sessionId === sessionId);
 }
 
-function getSessionTimer(req, res) {
-  const session = sessions.find(
-	(item) => item.id === req.params.id && item.ownerUserId === req.user.id
-  );
+async function getSessionTimer(req, res) {
+  try {
+	const result = await pool.query(
+	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
+	  [req.params.id]
+	);
 
-  if (!session) {
-	return res.status(404).json({
-	  success: false,
-	  message: 'Сессия не найдена'
-	});
-  }
+	const session = result.rows[0];
 
-  const timer = getTimerBySessionId(session.id);
+	if (!session) {
+	  return res.status(404).json({
+		success: false,
+		message: 'Сессия не найдена'
+	  });
+	}
 
-  if (!timer) {
+	const timer = getTimerBySessionId(session.id);
+
+	if (!timer) {
+	  return res.json({
+		success: true,
+		timer: {
+		  sessionId: session.id,
+		  durationSeconds: (session.settings?.timerMinutes || 3) * 60,
+		  startedAt: null,
+		  endsAt: null,
+		  state: 'idle',
+		  visualState: 'idle'
+		}
+	  });
+	}
+
 	return res.json({
 	  success: true,
 	  timer: {
-		sessionId: session.id,
-		durationSeconds: (session.settings.timerMinutes || 3) * 60,
-		startedAt: null,
-		endsAt: null,
-		state: 'idle',
-		visualState: 'idle'
+		...timer,
+		visualState: getTimerVisualState(timer)
 	  }
 	});
-  }
 
-  return res.json({
-	success: true,
-	timer: {
-	  ...timer,
-	  visualState: getTimerVisualState(timer)
-	}
-  });
+  } catch (error) {
+	console.error('getSessionTimer error:', error);
+	return res.status(500).json({ success: false });
+  }
 }
 
 module.exports = {
