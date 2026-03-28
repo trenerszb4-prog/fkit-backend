@@ -90,7 +90,19 @@ const result = await pool.query(
 
 async function createSession(req, res) {
   try {
-	const { title, serviceType = 'cards', settings } = req.body;
+	const {
+	  title,
+	  serviceType = 'cards',
+	  deckId,
+	  cardMode,
+	  randomCardsCount,
+	  maxCardsOnScreen,
+	  timerEnabled,
+	  timerMinutes,
+	  replaceCardEnabled,
+	  questionsEnabled,
+	  questions
+	} = req.body;
 
 	if (!title) {
 	  return res.status(400).json({
@@ -119,16 +131,16 @@ async function createSession(req, res) {
 	const pinCode = await generateUniquePinCode();
 	const sessionId = `s_${Date.now()}`;
 
-	const defaultSettings = {
-	  deckId: 'deck1',
-	  cardMode: 'full_deck',
-	  randomCardsCount: 0,
-	  maxCardsOnScreen: 1,
-	  timerEnabled: false,
-	  timerMinutes: 3,
-	  replaceCardEnabled: false,
-	  questionsEnabled: false,
-	  ...(settings || {})
+	const sessionSettings = {
+	  deckId: deckId !== undefined ? deckId : 'deck1',
+	  cardMode: cardMode !== undefined ? cardMode : 'full_deck',
+	  randomCardsCount: randomCardsCount !== undefined ? Number(randomCardsCount) : 0,
+	  maxCardsOnScreen: maxCardsOnScreen !== undefined ? Number(maxCardsOnScreen) : 1,
+	  timerEnabled: timerEnabled !== undefined ? Boolean(timerEnabled) : false,
+	  timerMinutes: timerMinutes !== undefined ? Number(timerMinutes) : 3,
+	  replaceCardEnabled: replaceCardEnabled !== undefined ? Boolean(replaceCardEnabled) : false,
+	  questionsEnabled: questionsEnabled !== undefined ? Boolean(questionsEnabled) : false,
+	  questions: Array.isArray(questions) ? questions : []
 	};
 
 	const result = await pool.query(
@@ -153,7 +165,7 @@ async function createSession(req, res) {
 		service.id,
 		title,
 		pinCode,
-		JSON.stringify(defaultSettings)
+		JSON.stringify(sessionSettings)
 	  ]
 	);
 
