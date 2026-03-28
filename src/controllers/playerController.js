@@ -315,7 +315,31 @@ async function joinByPin(req, res) {
 	  lastSeenAt: nowIso()
 	};
 
-	participants.push(participant);
+await pool.query(
+	  `
+	  INSERT INTO participants (
+		id,
+		session_id,
+		display_name,
+		source,
+		status,
+		assigned_card_ids,
+		joined_at,
+		last_seen_at
+	  )
+	  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	  `,
+	  [
+		participant.id,
+		participant.sessionId,
+		participant.displayName,
+		participant.source,
+		participant.status,
+		participant.assignedCardIds,
+		participant.joinedAt,
+		participant.lastSeenAt
+	  ]
+	);
 
 	return res.status(201).json({
 	  success: true,
