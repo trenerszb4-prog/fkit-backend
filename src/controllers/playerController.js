@@ -453,18 +453,16 @@ async function getPlayerCards(req, res) {
   try {
 	const { participantId } = req.params;
 
-	const participant = participants.find(
-	  (item) => item.id === participantId && item.status === 'active'
-	);
+	const participant = await getParticipantById(participantId);
 
-	if (!participant) {
+	if (!participant || participant.status !== 'active') {
 	  return res.status(404).json({
 		success: false,
 		message: 'Участник не найден или не активен'
 	  });
 	}
 
-	const session = await getSessionById(participant.sessionId);
+	const session = await getSessionById(participant.session_id);
 
 	if (!session) {
 	  return res.status(404).json({
@@ -474,7 +472,11 @@ async function getPlayerCards(req, res) {
 	}
 
 	if (session.status !== 'live') {
-	  markParticipantLeft(participant, 'session_inactive');
+	  await updateParticipantFields(participant.id, {
+		status: 'left',
+		left_at: nowIso(),
+		leave_reason: 'session_inactive'
+	  });
 
 	  return res.status(403).json({
 		success: false,
@@ -482,7 +484,9 @@ async function getPlayerCards(req, res) {
 	  });
 	}
 
-	touchParticipant(participant);
+	await updateParticipantFields(participant.id, {
+	  last_seen_at: nowIso()
+	});
 
 	const deck = await getDeckById(session.settings?.deckId);
 
@@ -497,8 +501,20 @@ async function getPlayerCards(req, res) {
 
 	let availableCards = allCards;
 
+	const participantForLogic = {
+	  id: participant.id,
+	  sessionId: participant.session_id,
+	  displayName: participant.display_name,
+	  status: participant.status,
+	  assignedCardIds: participant.assigned_card_ids || []
+	};
+
 	if (session.settings?.cardMode === 'random_subset') {
-	  availableCards = getOrAssignRandomCards(session, participant, allCards);
+	  availableCards = getOrAssignRandomCards(session, participantForLogic, allCards);
+
+	  await updateParticipantFields(participant.id, {
+		assigned_card_ids: participantForLogic.assignedCardIds
+	  });
 	}
 
 	const activeScreenCard = getParticipantActiveCard(session.id, participant.id);
