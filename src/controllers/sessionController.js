@@ -504,6 +504,63 @@ async function deleteSession(req, res) {
   }
 }
 
+async function kickParticipant(req, res) {
+  try {
+	const check = await pool.query(
+	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
+	  [req.params.id]
+	);
+
+	const session = check.rows[0];
+
+	if (!session) {
+	  return res.status(404).json({
+		success: false,
+		message: 'Сессия не найдена'
+	  });
+	}
+
+	const participant = participants.find(
+	  (item) =>
+		String(item.id) === String(req.params.participantId) &&
+		String(item.sessionId) === String(session.id)
+	);
+
+	if (!participant) {
+	  return res.status(404).json({
+		success: false,
+		message: 'Участник не найден'
+	  });
+	}
+
+	participant.status = 'kicked';
+	participant.kickedAt = new Date().toISOString();
+
+	screenCards.forEach((card) => {
+	  if (
+		String(card.participantId) === String(participant.id) &&
+		String(card.sessionId) === String(session.id) &&
+		card.isActive
+	  ) {
+		card.isActive = false;
+		card.removedAt = new Date().toISOString();
+	  }
+	});
+
+	return res.json({
+	  success: true,
+	  message: 'Участник удалён из комнаты',
+	  participant
+	});
+  } catch (error) {
+	console.error('kickParticipant error:', error);
+	return res.status(500).json({
+	  success: false,
+	  message: 'Не удалось удалить участника'
+	});
+  }
+}
+
 module.exports = {
   getSessions,
   createSession,
@@ -512,5 +569,6 @@ module.exports = {
   scheduleSession,
   startSession,
   getSessionParticipants,
+  kickParticipant,
   deleteSession
 };

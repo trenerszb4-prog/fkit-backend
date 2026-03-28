@@ -107,8 +107,34 @@ function getScreenReactions(req, res) {
   });
 }
 
+function deleteScreenCard(req, res) {
+  const screenCard = screenCards.find(
+    (item) =>
+      String(item.id) === String(req.params.screenCardId) &&
+      String(item.sessionId) === String(req.params.id) &&
+      item.isActive
+  );
+
+  if (!screenCard) {
+    return res.status(404).json({
+      success: false,
+      message: 'Карта на экране не найдена'
+    });
+  }
+
+  screenCard.isActive = false;
+  screenCard.removedAt = new Date().toISOString();
+
+  return res.json({
+    success: true,
+    message: 'Карта удалена с общего экрана',
+    screenCard
+  });
+}
+
 module.exports = {
   getScreen,
   clearScreen,
+  deleteScreenCard,
   getScreenReactions
 };
