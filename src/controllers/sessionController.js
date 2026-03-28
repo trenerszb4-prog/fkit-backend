@@ -20,7 +20,8 @@ function formatSession(row) {
 	updatedAt: row.updated_at,
 	startedAt: row.started_at,
 	userId: row.user_id,
-	serviceId: row.service_id
+	serviceId: row.service_id,
+	serviceType: row.service_type || 'cards'
   };
 }
 
@@ -59,15 +60,18 @@ async function ensureOpenSessionsLimit(userId, excludeSessionId = null) {
 
 async function getSessions(req, res) {
   try {
-	const result = await pool.query(
-	  `
-	  SELECT *
-	  FROM sessions
-	  WHERE user_id = $1
-	  ORDER BY created_at DESC
-	  `,
-	  [req.user.id]
-	);
+const result = await pool.query(
+	`
+	SELECT
+	  s.*,
+	  sv.code AS service_type
+	FROM sessions s
+	LEFT JOIN services sv ON sv.id = s.service_id
+	WHERE s.user_id = $1
+	ORDER BY s.created_at DESC
+	`,
+	[req.user.id]
+  );
 
 	return res.json({
 	  success: true,
@@ -170,16 +174,19 @@ async function createSession(req, res) {
 
 async function getSessionById(req, res) {
   try {
-	const result = await pool.query(
-	  `
-	  SELECT *
-	  FROM sessions
-	  WHERE id = $1
-		AND user_id = $2
-	  LIMIT 1
-	  `,
-	  [req.params.id, req.user.id]
-	);
+const result = await pool.query(
+	`
+	SELECT
+	  s.*,
+	  sv.code AS service_type
+	FROM sessions s
+	LEFT JOIN services sv ON sv.id = s.service_id
+	WHERE s.id = $1
+	  AND s.user_id = $2
+	LIMIT 1
+	`,
+	[req.params.id, req.user.id]
+  );
 
 	if (!result.rows[0]) {
 	  return res.status(404).json({

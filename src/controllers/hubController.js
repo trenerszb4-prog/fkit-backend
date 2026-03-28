@@ -2,15 +2,18 @@ const pool = require('../config/db');
 
 async function getHub(req, res) {
   try {
-	const sessionsResult = await pool.query(
-	  `
-	  SELECT *
-	  FROM sessions
-	  WHERE user_id = $1
-	  ORDER BY created_at DESC
-	  `,
-	  [req.user.id]
-	);
+const sessionsResult = await pool.query(
+	`
+	SELECT
+	  s.*,
+	  sv.code AS service_type
+	FROM sessions s
+	LEFT JOIN services sv ON sv.id = s.service_id
+	WHERE s.user_id = $1
+	ORDER BY s.created_at DESC
+	`,
+	[req.user.id]
+  );
 
 	const servicesResult = await pool.query(
 	  `
@@ -29,7 +32,8 @@ async function getHub(req, res) {
 	  settings: s.settings || {},
 	  createdAt: s.created_at,
 	  updatedAt: s.updated_at,
-	  startedAt: s.started_at
+	  startedAt: s.started_at,
+	  serviceType: s.service_type || 'cards'
 	}));
 
 	return res.json({
