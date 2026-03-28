@@ -14,5 +14,6 @@ router.delete('/:id', sessionController.deleteSession);
 router.post('/:id/schedule', sessionController.scheduleSession);
 router.post('/:id/start', sessionController.startSession);
 router.get('/:id/participants', sessionController.getSessionParticipants);
+router.post('/:id/participants/:participantId/kick', sessionController.kickParticipant);
 
 module.exports = router;
