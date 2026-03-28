@@ -113,6 +113,38 @@ async function getSessionById(sessionId) {
   return result.rows[0] || null;
 }
 
+async function getParticipantById(participantId) {
+  const result = await pool.query(
+	`
+	SELECT *
+	FROM participants
+	WHERE id = $1
+	LIMIT 1
+	`,
+	[participantId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function updateParticipantFields(participantId, fields) {
+  const keys = Object.keys(fields);
+
+  if (!keys.length) return;
+
+  const setParts = keys.map((key, index) => `${key} = $${index + 2}`);
+  const values = keys.map((key) => fields[key]);
+
+  await pool.query(
+	`
+	UPDATE participants
+	SET ${setParts.join(', ')}
+	WHERE id = $1
+	`,
+	[participantId, ...values]
+  );
+}
+
 async function getDeckById(deckId) {
   const result = await pool.query(
 	`
@@ -360,18 +392,16 @@ async function getPlayerSession(req, res) {
   try {
 	const { participantId } = req.params;
 
-	const participant = participants.find(
-	  (item) => item.id === participantId && item.status === 'active'
-	);
+	const participant = await getParticipantById(participantId);
 
-	if (!participant) {
+	if (!participant || participant.status !== 'active') {
 	  return res.status(404).json({
 		success: false,
 		message: 'Участник не найден или не активен'
 	  });
 	}
 
-	const session = await getSessionById(participant.sessionId);
+	const session = await getSessionById(participant.session_id);
 
 	if (!session) {
 	  return res.status(404).json({
@@ -381,7 +411,11 @@ async function getPlayerSession(req, res) {
 	}
 
 	if (session.status !== 'live') {
-	  markParticipantLeft(participant, 'session_inactive');
+	  await updateParticipantFields(participant.id, {
+		status: 'left',
+		left_at: nowIso(),
+		leave_reason: 'session_inactive'
+	  });
 
 	  return res.status(403).json({
 		success: false,
@@ -389,11 +423,21 @@ async function getPlayerSession(req, res) {
 	  });
 	}
 
-	touchParticipant(participant);
+	await updateParticipantFields(participant.id, {
+	  last_seen_at: nowIso()
+	});
 
 	return res.json({
 	  success: true,
-	  participant,
+	  participant: {
+		id: participant.id,
+		sessionId: participant.session_id,
+		displayName: participant.display_name,
+		source: participant.source,
+		status: participant.status,
+		joinedAt: participant.joined_at,
+		lastSeenAt: nowIso()
+	  },
 	  session
 	});
   } catch (error) {
@@ -667,45 +711,59 @@ async function recallCard(req, res) {
   }
 }
 
-function leaveSession(req, res) {
-  const { participantId } = req.params;
+async function leaveSession(req, res) {
+  try {
+	const { participantId } = req.params;
 
-  const participant = participants.find((item) => item.id === participantId);
+	const participant = await getParticipantById(participantId);
 
-  if (!participant) {
-	return res.status(404).json({
+	if (!participant) {
+	  return res.status(404).json({
+		success: false,
+		message: 'Участник не найден'
+	  });
+	}
+
+	await updateParticipantFields(participant.id, {
+	  status: 'left',
+	  left_at: nowIso(),
+	  leave_reason: 'manual_leave'
+	});
+
+	return res.json({
+	  success: true,
+	  message: 'Участник вышел из сессии'
+	});
+  } catch (error) {
+	console.error('leaveSession error:', error);
+	return res.status(500).json({
 	  success: false,
-	  message: 'Участник не найден'
+	  message: 'Ошибка выхода из сессии'
 	});
   }
-
-  markParticipantLeft(participant, 'manual_leave');
-
-  return res.json({
-	success: true,
-	message: 'Участник вышел из сессии'
-  });
 }
 
 async function heartbeat(req, res) {
   try {
 	const { participantId } = req.params;
 
-	const participant = participants.find(
-	  (item) => item.id === participantId && item.status === 'active'
-	);
+	const participant = await getParticipantById(participantId);
 
-	if (!participant) {
+	if (!participant || participant.status !== 'active') {
 	  return res.status(404).json({
 		success: false,
 		message: 'Участник не найден или не активен'
 	  });
 	}
 
-	const session = await getSessionById(participant.sessionId);
+	const session = await getSessionById(participant.session_id);
 
 	if (!session || session.status !== 'live') {
-	  markParticipantLeft(participant, 'session_inactive');
+	  await updateParticipantFields(participant.id, {
+		status: 'left',
+		left_at: nowIso(),
+		leave_reason: 'session_inactive'
+	  });
 
 	  return res.status(403).json({
 		success: false,
@@ -713,7 +771,9 @@ async function heartbeat(req, res) {
 	  });
 	}
 
-	touchParticipant(participant);
+	await updateParticipantFields(participant.id, {
+	  last_seen_at: nowIso()
+	});
 
 	return res.json({
 	  success: true,
