@@ -178,7 +178,7 @@ async function getDeckCardsByDeckId(deckId) {
   return result.rows;
 }
 
-function startOrRestartTimer(session) {
+async function startOrRestartTimer(session) {
   if (!session.settings?.timerEnabled) {
 	return null;
   }
@@ -187,25 +187,35 @@ function startOrRestartTimer(session) {
   const startedAt = new Date();
   const endsAt = new Date(startedAt.getTime() + durationSeconds * 1000);
 
-  let timer = timerStates.find((item) => item.sessionId === session.id);
-
-  if (!timer) {
-	timer = {
-	  sessionId: session.id,
+  const result = await pool.query(
+	`
+	INSERT INTO timer_states (
+	  session_id,
+	  duration_seconds,
+	  started_at,
+	  ends_at,
+	  state,
+	  updated_at
+	)
+	VALUES ($1, $2, $3, $4, 'running', now())
+	ON CONFLICT (session_id)
+	DO UPDATE SET
+	  duration_seconds = EXCLUDED.duration_seconds,
+	  started_at = EXCLUDED.started_at,
+	  ends_at = EXCLUDED.ends_at,
+	  state = 'running',
+	  updated_at = now()
+	RETURNING *
+	`,
+	[
+	  session.id,
 	  durationSeconds,
-	  startedAt: startedAt.toISOString(),
-	  endsAt: endsAt.toISOString(),
-	  state: 'running'
-	};
-	timerStates.push(timer);
-  } else {
-	timer.durationSeconds = durationSeconds;
-	timer.startedAt = startedAt.toISOString();
-	timer.endsAt = endsAt.toISOString();
-	timer.state = 'running';
-  }
+	  startedAt,
+	  endsAt
+	]
+  );
 
-  return timer;
+  return result.rows[0];
 }
 
 function getOrAssignRandomCards(session, participant, cards) {

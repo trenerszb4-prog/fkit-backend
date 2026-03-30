@@ -1,30 +1,27 @@
 const pool = require('../config/db');
-const { timerStates } = require('../data/db');
 
 function getTimerVisualState(timer) {
   const now = Date.now();
 
   if (!timer || timer.state === 'idle') return 'idle';
 
-  if (timer.endsAt && now >= new Date(timer.endsAt).getTime()) {
+  if (timer.ends_at && now >= new Date(timer.ends_at).getTime()) {
 	return 'expired';
   }
 
   return 'running';
 }
 
-function getTimerBySessionId(sessionId) {
-  return timerStates.find((item) => item.sessionId === sessionId);
-}
-
 async function getSessionTimer(req, res) {
   try {
-	const result = await pool.query(
+	const sessionId = req.params.id;
+
+	const sessionResult = await pool.query(
 	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
-	  [req.params.id]
+	  [sessionId]
 	);
 
-	const session = result.rows[0];
+	const session = sessionResult.rows[0];
 
 	if (!session) {
 	  return res.status(404).json({
@@ -33,13 +30,18 @@ async function getSessionTimer(req, res) {
 	  });
 	}
 
-	const timer = getTimerBySessionId(session.id);
+	const timerResult = await pool.query(
+	  `SELECT * FROM timer_states WHERE session_id = $1 LIMIT 1`,
+	  [sessionId]
+	);
+
+	const timer = timerResult.rows[0];
 
 	if (!timer) {
 	  return res.json({
 		success: true,
 		timer: {
-		  sessionId: session.id,
+		  sessionId,
 		  durationSeconds: (session.settings?.timerMinutes || 3) * 60,
 		  startedAt: null,
 		  endsAt: null,
@@ -52,7 +54,12 @@ async function getSessionTimer(req, res) {
 	return res.json({
 	  success: true,
 	  timer: {
-		...timer,
+		id: timer.id,
+		sessionId: timer.session_id,
+		durationSeconds: timer.duration_seconds,
+		startedAt: timer.started_at,
+		endsAt: timer.ends_at,
+		state: timer.state,
 		visualState: getTimerVisualState(timer)
 	  }
 	});
@@ -65,6 +72,5 @@ async function getSessionTimer(req, res) {
 
 module.exports = {
   getSessionTimer,
-  getTimerBySessionId,
   getTimerVisualState
 };
