@@ -525,12 +525,17 @@ async function deleteSession(req, res) {
 
 async function kickParticipant(req, res) {
   try {
-	const check = await pool.query(
-	  `SELECT * FROM sessions WHERE id = $1 LIMIT 1`,
+	const sessionResult = await pool.query(
+	  `
+	  SELECT *
+	  FROM sessions
+	  WHERE id = $1
+	  LIMIT 1
+	  `,
 	  [req.params.id]
 	);
 
-	const session = check.rows[0];
+	const session = sessionResult.rows[0];
 
 	if (!session) {
 	  return res.status(404).json({
@@ -539,11 +544,18 @@ async function kickParticipant(req, res) {
 	  });
 	}
 
-	const participant = participants.find(
-	  (item) =>
-		String(item.id) === String(req.params.participantId) &&
-		String(item.sessionId) === String(session.id)
+	const participantResult = await pool.query(
+	  `
+	  SELECT *
+	  FROM participants
+	  WHERE id = $1
+		AND session_id = $2
+	  LIMIT 1
+	  `,
+	  [req.params.participantId, session.id]
 	);
+
+	const participant = participantResult.rows[0];
 
 	if (!participant) {
 	  return res.status(404).json({
@@ -552,24 +564,38 @@ async function kickParticipant(req, res) {
 	  });
 	}
 
-	participant.status = 'kicked';
-	participant.kickedAt = new Date().toISOString();
+	await pool.query(
+	  `
+	  UPDATE participants
+	  SET status = 'kicked',
+		  left_at = NOW(),
+		  leave_reason = 'kicked'
+	  WHERE id = $1
+	  `,
+	  [participant.id]
+	);
 
-	screenCards.forEach((card) => {
-	  if (
-		String(card.participantId) === String(participant.id) &&
-		String(card.sessionId) === String(session.id) &&
-		card.isActive
-	  ) {
-		card.isActive = false;
-		card.removedAt = new Date().toISOString();
-	  }
-	});
+	await pool.query(
+	  `
+	  UPDATE screen_cards
+	  SET is_active = false,
+		  removed_at = NOW()
+	  WHERE participant_id = $1
+		AND session_id = $2
+		AND is_active = true
+	  `,
+	  [participant.id, session.id]
+	);
 
 	return res.json({
 	  success: true,
 	  message: 'Участник удалён из комнаты',
-	  participant
+	  participant: {
+		id: participant.id,
+		sessionId: participant.session_id,
+		displayName: participant.display_name,
+		status: 'kicked'
+	  }
 	});
   } catch (error) {
 	console.error('kickParticipant error:', error);
