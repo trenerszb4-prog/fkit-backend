@@ -1,5 +1,4 @@
 const pool = require('../config/db');
-const { reactions } = require('../data/db');
 
 function formatSession(session) {
   return {
@@ -139,19 +138,49 @@ async function clearScreen(req, res) {
   }
 }
 
-function getScreenReactions(req, res) {
-  const list = reactions.filter(
-    (r) => String(r.sessionId) === String(req.params.id) && !r.isProcessed
-  );
+async function getScreenReactions(req, res) {
+  try {
+    const result = await pool.query(
+      `
+      SELECT *
+      FROM reactions
+      WHERE session_id = $1
+        AND is_processed = false
+      ORDER BY created_at ASC
+      `,
+      [req.params.id]
+    );
 
-  list.forEach((r) => {
-    r.isProcessed = true;
-  });
+    const reactionsList = result.rows.map((r) => ({
+      id: r.id,
+      sessionId: r.session_id,
+      participantId: r.participant_id,
+      emoji: r.emoji,
+      createdAt: r.created_at
+    }));
 
-  return res.json({
-    success: true,
-    reactions: list
-  });
+    // помечаем как обработанные
+    await pool.query(
+      `
+      UPDATE reactions
+      SET is_processed = true
+      WHERE session_id = $1
+        AND is_processed = false
+      `,
+      [req.params.id]
+    );
+
+    return res.json({
+      success: true,
+      reactions: reactionsList
+    });
+  } catch (error) {
+    console.error('getScreenReactions error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Ошибка получения реакций'
+    });
+  }
 }
 
 async function deleteScreenCard(req, res) {

@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const { timerStates, reactions } = require('../data/db');
+const { timerStates } = require('../data/db');
 
 const PARTICIPANT_HEARTBEAT_TTL_MS = 30 * 1000;
 
@@ -942,14 +942,25 @@ async function sendReaction(req, res) {
 	  });
 	}
 
-	reactions.push({
-	  id: `r_${Date.now()}_${Math.random()}`,
-	  sessionId: participant.session_id,
-	  participantId,
-	  emoji,
-	  createdAt: new Date().toISOString(),
-	  isProcessed: false
-	});
+await pool.query(
+	  `
+	  INSERT INTO reactions (
+		id,
+		session_id,
+		participant_id,
+		emoji,
+		is_processed,
+		created_at
+	  )
+	  VALUES ($1, $2, $3, $4, false, now())
+	  `,
+	  [
+		`r_${Date.now()}`,
+		participant.session_id,
+		participant.id,
+		emoji
+	  ]
+	);
 
 	return res.json({
 	  success: true
