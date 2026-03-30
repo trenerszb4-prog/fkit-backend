@@ -49,9 +49,29 @@ async function getScreen(req, res) {
 
     const deck = await getDeckById(session.settings?.deckId);
 
-    const activeCards = screenCards
-      .filter((c) => String(c.sessionId) === String(session.id) && c.isActive)
-      .sort((a, b) => new Date(a.shownAt || 0) - new Date(b.shownAt || 0));
+    const activeCardsResult = await pool.query(
+      `
+      SELECT *
+      FROM screen_cards
+      WHERE session_id = $1
+        AND is_active = true
+      ORDER BY shown_at ASC
+      `,
+      [session.id]
+    );
+
+    const activeCards = activeCardsResult.rows.map((c) => ({
+      id: c.id,
+      sessionId: c.session_id,
+      participantId: c.participant_id,
+      participantName: c.participant_name,
+      deckCardId: c.deck_card_id,
+      imageUrl: c.image_url,
+      isActive: c.is_active,
+      shownAt: c.shown_at,
+      updatedAt: c.updated_at,
+      removedAt: c.removed_at
+    }));
 
     const sessionParticipants = participants.filter(
       (p) => String(p.sessionId) === String(session.id) && p.status === 'active'
