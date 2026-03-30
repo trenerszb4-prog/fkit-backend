@@ -723,7 +723,7 @@ async function showCard(req, res) {
 		]
 	  );
 
-	  const timer = startOrRestartTimer(session);
+	  const timer = await startOrRestartTimer(session);
 
 	  return res.json({
 		success: true,
@@ -772,7 +772,7 @@ async function showCard(req, res) {
 	  ]
 	);
 
-	const timer = startOrRestartTimer(session);
+	const timer = await startOrRestartTimer(session);
 
 	return res.json({
 	  success: true,
