@@ -1,5 +1,4 @@
 const pool = require('../config/db');
-const { timerStates } = require('../data/db');
 
 const PARTICIPANT_HEARTBEAT_TTL_MS = 30 * 1000;
 
@@ -425,7 +424,7 @@ async function joinByPin(req, res) {
 	  success: true,
 	  message: 'Участник вошёл в сессию',
 	  participant,
-	  session
+	  session: formatSession(session)
 	});
   } catch (error) {
 	console.error('joinByPin error:', error);
@@ -486,7 +485,7 @@ async function getPlayerSession(req, res) {
 		joinedAt: participant.joined_at,
 		lastSeenAt: nowIso()
 	  },
-	  session
+	  session: formatSession(session)
 	});
   } catch (error) {
 	console.error('getPlayerSession error:', error);
@@ -1094,6 +1093,21 @@ async function replaceBlindCard(req, res) {
 	  message: 'Ошибка замены карты'
 	});
   }
+}
+
+function formatSession(session) {
+  if (!session) return null;
+
+  return {
+	id: session.id,
+	title: session.title,
+	pinCode: session.pin_code,
+	status: session.status,
+	settings: session.settings || {},
+	createdAt: session.created_at,
+	updatedAt: session.updated_at,
+	startedAt: session.started_at
+  };
 }
 
 module.exports = {
