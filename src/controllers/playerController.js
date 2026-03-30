@@ -177,6 +177,27 @@ async function getDeckCardsByDeckId(deckId) {
   return result.rows;
 }
 
+function formatDeck(deck) {
+  if (!deck) return null;
+
+  return {
+	id: deck.id,
+	title: deck.title,
+	description: deck.description,
+	backImageUrl: deck.back_image_url
+  };
+}
+
+function formatDeckCard(card) {
+  return {
+	id: card.id,
+	deckId: card.deck_id,
+	title: card.title,
+	imageUrl: card.image_url,
+	sortOrder: card.sort_order
+  };
+}
+
 async function startOrRestartTimer(session) {
   if (!session.settings?.timerEnabled) {
 	return null;
@@ -566,10 +587,10 @@ async function getPlayerCards(req, res) {
 
 	const activeScreenCard = await getParticipantActiveCard(session.id, participant.id);
 
-	return res.json({
+return res.json({
 	  success: true,
-	  deck,
-	  cards: availableCards,
+	  deck: formatDeck(deck),
+	  cards: availableCards.map(formatDeckCard),
 	  activeScreenCard: activeScreenCard || null
 	});
   } catch (error) {
