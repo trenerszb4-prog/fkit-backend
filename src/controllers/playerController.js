@@ -700,9 +700,7 @@ async function recallCard(req, res) {
   try {
 	const { participantId } = req.params;
 
-	const participant = participants.find(
-	  (item) => item.id === participantId && item.status === 'active'
-	);
+const participant = await getParticipantById(participantId);
 
 	if (!participant) {
 	  return res.status(404).json({
@@ -731,17 +729,25 @@ async function recallCard(req, res) {
 
 	touchParticipant(participant);
 
-	const activeCard = getParticipantActiveCard(participant.sessionId, participant.id);
-
-	if (!activeCard) {
+const result = await pool.query(
+	  `
+	  UPDATE screen_cards
+	  SET is_active = false,
+		  removed_at = now()
+	  WHERE participant_id = $1
+		AND session_id = $2
+		AND is_active = true
+	  RETURNING *
+	  `,
+	  [participant.id, participant.session_id]
+	);
+	
+	if (!result.rows.length) {
 	  return res.status(404).json({
 		success: false,
 		message: 'Активная карта не найдена'
 	  });
 	}
-
-	activeCard.isActive = false;
-	activeCard.removedAt = nowIso();
 
 	return res.json({
 	  success: true,
@@ -896,7 +902,11 @@ async function replaceBlindCard(req, res) {
 	}
 
 	if (session.status !== 'live') {
-	  markParticipantLeft(participant, 'session_inactive');
+	  await updateParticipantFields(participant.id, {
+		status: 'left',
+		left_at: nowIso(),
+		leave_reason: 'session_inactive'
+	  });
 
 	  return res.status(403).json({
 		success: false,
@@ -952,7 +962,9 @@ async function replaceBlindCard(req, res) {
 	  });
 	}
 
-	touchParticipant(participant);
+	await updateParticipantFields(participant.id, {
+	  last_seen_at: nowIso()
+	});
 
 	return res.json({
 	  success: true,

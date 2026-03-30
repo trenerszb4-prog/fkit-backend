@@ -73,9 +73,24 @@ async function getScreen(req, res) {
       removedAt: c.removed_at
     }));
 
-    const sessionParticipants = participants.filter(
-      (p) => String(p.sessionId) === String(session.id) && p.status === 'active'
+const participantsResult = await pool.query(
+      `
+      SELECT *
+      FROM participants
+      WHERE session_id = $1
+        AND status = 'active'
+      `,
+      [session.id]
     );
+    
+    const sessionParticipants = participantsResult.rows.map((p) => ({
+      id: p.id,
+      sessionId: p.session_id,
+      displayName: p.display_name,
+      status: p.status,
+      joinedAt: p.joined_at,
+      lastSeenAt: p.last_seen_at
+    }));
 
     return res.json({
       success: true,
@@ -127,31 +142,34 @@ function getScreenReactions(req, res) {
   });
 }
 
-function deleteScreenCard(req, res) {
-  const screenCard = screenCards.find(
-    (item) =>
-      String(item.id) === String(req.params.screenCardId) &&
-      String(item.sessionId) === String(req.params.id) &&
-      item.isActive
+async function deleteScreenCard(req, res) {
+  const result = await pool.query(
+    `
+    UPDATE screen_cards
+    SET is_active = false,
+        removed_at = now()
+    WHERE id = $1
+      AND session_id = $2
+      AND is_active = true
+    RETURNING *
+    `,
+    [req.params.screenCardId, req.params.id]
   );
-
-  if (!screenCard) {
+  
+  if (!result.rows.length) {
     return res.status(404).json({
       success: false,
       message: 'Карта на экране не найдена'
     });
   }
-
-  screenCard.isActive = false;
-  screenCard.removedAt = new Date().toISOString();
-
+  
   return res.json({
     success: true,
-    message: 'Карта удалена с общего экрана',
-    screenCard
+    message: 'Карта удалена',
+    screenCard: result.rows[0]
   });
-}
-
+  }
+  
 module.exports = {
   getScreen,
   clearScreen,
