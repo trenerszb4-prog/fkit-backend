@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const { participants, screenCards, reactions } = require('../data/db');
+const { reactions } = require('../data/db');
 
 function formatSession(session) {
   return {
@@ -73,7 +73,7 @@ async function getScreen(req, res) {
       removedAt: c.removed_at
     }));
 
-const participantsResult = await pool.query(
+    const participantsResult = await pool.query(
       `
       SELECT *
       FROM participants
@@ -82,7 +82,7 @@ const participantsResult = await pool.query(
       `,
       [session.id]
     );
-    
+
     const sessionParticipants = participantsResult.rows.map((p) => ({
       id: p.id,
       sessionId: p.session_id,
@@ -116,15 +116,27 @@ const participantsResult = await pool.query(
   }
 }
 
-function clearScreen(req, res) {
-  screenCards.forEach((c) => {
-    if (String(c.sessionId) === String(req.params.id)) {
-      c.isActive = false;
-      c.removedAt = new Date().toISOString();
-    }
-  });
+async function clearScreen(req, res) {
+  try {
+    await pool.query(
+      `
+      UPDATE screen_cards
+      SET is_active = false,
+          removed_at = now()
+      WHERE session_id = $1
+        AND is_active = true
+      `,
+      [req.params.id]
+    );
 
-  return res.json({ success: true });
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('clearScreen error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Ошибка очистки экрана'
+    });
+  }
 }
 
 function getScreenReactions(req, res) {
@@ -143,33 +155,41 @@ function getScreenReactions(req, res) {
 }
 
 async function deleteScreenCard(req, res) {
-  const result = await pool.query(
-    `
-    UPDATE screen_cards
-    SET is_active = false,
-        removed_at = now()
-    WHERE id = $1
-      AND session_id = $2
-      AND is_active = true
-    RETURNING *
-    `,
-    [req.params.screenCardId, req.params.id]
-  );
-  
-  if (!result.rows.length) {
-    return res.status(404).json({
+  try {
+    const result = await pool.query(
+      `
+      UPDATE screen_cards
+      SET is_active = false,
+          removed_at = now()
+      WHERE id = $1
+        AND session_id = $2
+        AND is_active = true
+      RETURNING *
+      `,
+      [req.params.screenCardId, req.params.id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Карта на экране не найдена'
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Карта удалена',
+      screenCard: result.rows[0]
+    });
+  } catch (error) {
+    console.error('deleteScreenCard error:', error);
+    return res.status(500).json({
       success: false,
-      message: 'Карта на экране не найдена'
+      message: 'Ошибка удаления карты'
     });
   }
-  
-  return res.json({
-    success: true,
-    message: 'Карта удалена',
-    screenCard: result.rows[0]
-  });
-  }
-  
+}
+
 module.exports = {
   getScreen,
   clearScreen,

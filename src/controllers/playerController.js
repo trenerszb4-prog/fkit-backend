@@ -1,10 +1,5 @@
 const pool = require('../config/db');
-const {
-  participants,
-  screenCards,
-  timerStates,
-  reactions
-} = require('../data/db');
+const { timerStates, reactions } = require('../data/db');
 
 const PARTICIPANT_HEARTBEAT_TTL_MS = 30 * 1000;
 
@@ -52,12 +47,20 @@ function getHumorSuffixes(name) {
   ];
 }
 
-function makeUniqueDisplayName(sessionId, rawName) {
+async function makeUniqueDisplayName(sessionId, rawName) {
   const baseName = String(rawName || '').trim().replace(/\s+/g, ' ');
 
-  const activeNames = participants
-	.filter((item) => item.sessionId === sessionId && item.status === 'active')
-	.map((item) => normalizeName(item.displayName));
+  const result = await pool.query(
+	`
+	SELECT display_name
+	FROM participants
+	WHERE session_id = $1
+	  AND status = 'active'
+	`,
+	[sessionId]
+  );
+
+  const activeNames = result.rows.map((item) => normalizeName(item.display_name));
 
   if (!activeNames.includes(normalizeName(baseName))) {
 	return baseName;
@@ -175,47 +178,6 @@ async function getDeckCardsByDeckId(deckId) {
   return result.rows;
 }
 
-function touchParticipant(participant) {
-  participant.lastSeenAt = nowIso();
-}
-
-function deactivateParticipantCards(participant) {
-  screenCards.forEach((card) => {
-	if (
-	  card.participantId === participant.id &&
-	  card.sessionId === participant.sessionId &&
-	  card.isActive
-	) {
-	  card.isActive = false;
-	  card.removedAt = nowIso();
-	}
-  });
-}
-
-function markParticipantLeft(participant, reason = 'left') {
-  participant.status = 'left';
-  participant.leftAt = nowIso();
-  participant.leaveReason = reason;
-  deactivateParticipantCards(participant);
-}
-
-function cleanupStaleParticipants(sessionId = null) {
-  const now = Date.now();
-
-  participants.forEach((participant) => {
-	if (participant.status !== 'active') return;
-	if (sessionId && participant.sessionId !== sessionId) return;
-
-	const lastSeen = participant.lastSeenAt || participant.joinedAt;
-	if (!lastSeen) return;
-
-	const diff = now - new Date(lastSeen).getTime();
-	if (diff > PARTICIPANT_HEARTBEAT_TTL_MS) {
-	  markParticipantLeft(participant, 'timeout');
-	}
-  });
-}
-
 function startOrRestartTimer(session) {
   if (!session.settings?.timerEnabled) {
 	return null;
@@ -307,13 +269,89 @@ function replaceRandomAssignedCard(session, participant, currentCardId, allDeckC
   };
 }
 
-function getParticipantActiveCard(sessionId, participantId) {
-  return screenCards.find(
-	(item) =>
-	  item.sessionId === sessionId &&
-	  item.participantId === participantId &&
-	  item.isActive
+async function getParticipantActiveCard(sessionId, participantId) {
+  const result = await pool.query(
+	`
+	SELECT *
+	FROM screen_cards
+	WHERE session_id = $1
+	  AND participant_id = $2
+	  AND is_active = true
+	ORDER BY shown_at DESC
+	LIMIT 1
+	`,
+	[sessionId, participantId]
   );
+
+  if (!result.rows[0]) return null;
+
+  const row = result.rows[0];
+
+  return {
+	id: row.id,
+	sessionId: row.session_id,
+	participantId: row.participant_id,
+	participantName: row.participant_name,
+	deckCardId: row.deck_card_id,
+	imageUrl: row.image_url,
+	isActive: row.is_active,
+	shownAt: row.shown_at,
+	updatedAt: row.updated_at,
+	removedAt: row.removed_at
+  };
+}
+
+function cleanupStaleParticipants(sessionId = null) {
+  (async () => {
+	const params = ['active'];
+	let query = `
+	  SELECT id, session_id, last_seen_at, joined_at
+	  FROM participants
+	  WHERE status = $1
+	`;
+
+	if (sessionId) {
+	  params.push(sessionId);
+	  query += ` AND session_id = $2`;
+	}
+
+	const result = await pool.query(query, params);
+	const now = Date.now();
+
+	for (const participant of result.rows) {
+	  const lastSeen = participant.last_seen_at || participant.joined_at;
+	  if (!lastSeen) continue;
+
+	  const diff = now - new Date(lastSeen).getTime();
+
+	  if (diff > PARTICIPANT_HEARTBEAT_TTL_MS) {
+		await pool.query(
+		  `
+		  UPDATE participants
+		  SET status = 'left',
+			  left_at = now(),
+			  leave_reason = 'timeout'
+		  WHERE id = $1
+		  `,
+		  [participant.id]
+		);
+
+		await pool.query(
+		  `
+		  UPDATE screen_cards
+		  SET is_active = false,
+			  removed_at = now()
+		  WHERE participant_id = $1
+			AND session_id = $2
+			AND is_active = true
+		  `,
+		  [participant.id, participant.session_id]
+		);
+	  }
+	}
+  })().catch((error) => {
+	console.error('cleanupStaleParticipants error:', error);
+  });
 }
 
 async function joinByPin(req, res) {
@@ -339,7 +377,7 @@ async function joinByPin(req, res) {
 	const participant = {
 	  id: generateParticipantId(),
 	  sessionId: session.id,
-	  displayName: makeUniqueDisplayName(session.id, name),
+	  displayName: await makeUniqueDisplayName(session.id, name),
 	  source: source || 'browser',
 	  status: 'active',
 	  assignedCardIds: [],
@@ -347,7 +385,7 @@ async function joinByPin(req, res) {
 	  lastSeenAt: nowIso()
 	};
 
-await pool.query(
+	await pool.query(
 	  `
 	  INSERT INTO participants (
 		id,
@@ -517,7 +555,7 @@ async function getPlayerCards(req, res) {
 	  });
 	}
 
-	const activeScreenCard = getParticipantActiveCard(session.id, participant.id);
+	const activeScreenCard = await getParticipantActiveCard(session.id, participant.id);
 
 	return res.json({
 	  success: true,
@@ -595,7 +633,30 @@ async function showCard(req, res) {
 	const settings = session.settings || {};
 	const maxCardsOnScreen = Math.max(1, Number(settings.maxCardsOnScreen || 1));
 
-	// 1. Получаем активные карты с экрана
+	const participantForLogic = {
+	  id: participant.id,
+	  sessionId: participant.session_id,
+	  displayName: participant.display_name,
+	  status: participant.status,
+	  assignedCardIds: participant.assigned_card_ids || []
+	};
+
+	if (settings.cardMode === 'random_subset') {
+	  const allowedCards = getOrAssignRandomCards(session, participantForLogic, allDeckCards);
+	  const allowedCardIds = allowedCards.map((item) => item.id);
+
+	  await updateParticipantFields(participant.id, {
+		assigned_card_ids: participantForLogic.assignedCardIds
+	  });
+
+	  if (!allowedCardIds.includes(cardId)) {
+		return res.status(403).json({
+		  success: false,
+		  message: 'Эта карта недоступна участнику'
+		});
+	  }
+	}
+
 	const activeCardsResult = await pool.query(
 	  `
 	  SELECT *
@@ -609,7 +670,6 @@ async function showCard(req, res) {
 
 	const activeCards = activeCardsResult.rows;
 
-	// 2. Проверяем — есть ли уже карта этого участника
 	const existingCard = activeCards.find(
 	  (c) => c.participant_id === participant.id
 	);
@@ -633,14 +693,16 @@ async function showCard(req, res) {
 		]
 	  );
 
+	  const timer = startOrRestartTimer(session);
+
 	  return res.json({
 		success: true,
 		message: 'Карта обновлена',
-		screenCard: result.rows[0]
+		screenCard: result.rows[0],
+		timer: timer || null
 	  });
 	}
 
-	// 3. Если превышен лимит — удаляем самую старую
 	if (activeCards.length >= maxCardsOnScreen) {
 	  const oldest = activeCards[0];
 
@@ -655,7 +717,6 @@ async function showCard(req, res) {
 	  );
 	}
 
-	// 4. Добавляем новую карту
 	const newCardResult = await pool.query(
 	  `
 	  INSERT INTO screen_cards (
@@ -681,12 +742,14 @@ async function showCard(req, res) {
 	  ]
 	);
 
+	const timer = startOrRestartTimer(session);
+
 	return res.json({
 	  success: true,
 	  message: 'Карта показана',
-	  screenCard: newCardResult.rows[0]
+	  screenCard: newCardResult.rows[0],
+	  timer: timer || null
 	});
-
   } catch (error) {
 	console.error('showCard error:', error);
 	return res.status(500).json({
@@ -700,16 +763,16 @@ async function recallCard(req, res) {
   try {
 	const { participantId } = req.params;
 
-const participant = await getParticipantById(participantId);
+	const participant = await getParticipantById(participantId);
 
-	if (!participant) {
+	if (!participant || participant.status !== 'active') {
 	  return res.status(404).json({
 		success: false,
 		message: 'Участник не найден или не активен'
 	  });
 	}
 
-	const session = await getSessionById(participant.sessionId);
+	const session = await getSessionById(participant.session_id);
 
 	if (!session) {
 	  return res.status(404).json({
@@ -719,7 +782,11 @@ const participant = await getParticipantById(participantId);
 	}
 
 	if (session.status !== 'live') {
-	  markParticipantLeft(participant, 'session_inactive');
+	  await updateParticipantFields(participant.id, {
+		status: 'left',
+		left_at: nowIso(),
+		leave_reason: 'session_inactive'
+	  });
 
 	  return res.status(403).json({
 		success: false,
@@ -727,9 +794,11 @@ const participant = await getParticipantById(participantId);
 	  });
 	}
 
-	touchParticipant(participant);
+	await updateParticipantFields(participant.id, {
+	  last_seen_at: nowIso()
+	});
 
-const result = await pool.query(
+	const result = await pool.query(
 	  `
 	  UPDATE screen_cards
 	  SET is_active = false,
@@ -741,7 +810,7 @@ const result = await pool.query(
 	  `,
 	  [participant.id, participant.session_id]
 	);
-	
+
 	if (!result.rows.length) {
 	  return res.status(404).json({
 		success: false,
@@ -780,6 +849,18 @@ async function leaveSession(req, res) {
 	  left_at: nowIso(),
 	  leave_reason: 'manual_leave'
 	});
+
+	await pool.query(
+	  `
+	  UPDATE screen_cards
+	  SET is_active = false,
+		  removed_at = now()
+	  WHERE participant_id = $1
+		AND session_id = $2
+		AND is_active = true
+	  `,
+	  [participant.id, participant.session_id]
+	);
 
 	return res.json({
 	  success: true,
@@ -839,41 +920,47 @@ async function heartbeat(req, res) {
   }
 }
 
-function sendReaction(req, res) {
-  const { participantId } = req.params;
-  const { emoji } = req.body;
+async function sendReaction(req, res) {
+  try {
+	const { participantId } = req.params;
+	const { emoji } = req.body;
 
-  const participant = participants.find(
-	(p) => p.id === participantId && p.status === 'active'
-  );
+	const participant = await getParticipantById(participantId);
 
-  if (!participant) {
-	return res.status(404).json({
+	if (!participant || participant.status !== 'active') {
+	  return res.status(404).json({
+		success: false,
+		message: 'Участник не найден'
+	  });
+	}
+
+	const allowed = ['❤️', '👍', '😂'];
+	if (!allowed.includes(emoji)) {
+	  return res.status(400).json({
+		success: false,
+		message: 'Недопустимая реакция'
+	  });
+	}
+
+	reactions.push({
+	  id: `r_${Date.now()}_${Math.random()}`,
+	  sessionId: participant.session_id,
+	  participantId,
+	  emoji,
+	  createdAt: new Date().toISOString(),
+	  isProcessed: false
+	});
+
+	return res.json({
+	  success: true
+	});
+  } catch (error) {
+	console.error('sendReaction error:', error);
+	return res.status(500).json({
 	  success: false,
-	  message: 'Участник не найден'
+	  message: 'Ошибка отправки реакции'
 	});
   }
-
-  const allowed = ['❤️', '👍', '😂'];
-  if (!allowed.includes(emoji)) {
-	return res.status(400).json({
-	  success: false,
-	  message: 'Недопустимая реакция'
-	});
-  }
-
-  reactions.push({
-	id: `r_${Date.now()}_${Math.random()}`,
-	sessionId: participant.sessionId,
-	participantId,
-	emoji,
-	createdAt: new Date().toISOString(),
-	isProcessed: false
-  });
-
-  return res.json({
-	success: true
-  });
 }
 
 async function replaceBlindCard(req, res) {
@@ -881,18 +968,16 @@ async function replaceBlindCard(req, res) {
 	const { participantId } = req.params;
 	const { currentCardId } = req.body;
 
-	const participant = participants.find(
-	  (item) => item.id === participantId && item.status === 'active'
-	);
+	const participant = await getParticipantById(participantId);
 
-	if (!participant) {
+	if (!participant || participant.status !== 'active') {
 	  return res.status(404).json({
 		success: false,
 		message: 'Участник не найден или не активен'
 	  });
 	}
 
-	const session = await getSessionById(participant.sessionId);
+	const session = await getSessionById(participant.session_id);
 
 	if (!session) {
 	  return res.status(404).json({
@@ -948,9 +1033,17 @@ async function replaceBlindCard(req, res) {
 
 	const allDeckCards = await getDeckCardsByDeckId(deck.id);
 
+	const participantForLogic = {
+	  id: participant.id,
+	  sessionId: participant.session_id,
+	  displayName: participant.display_name,
+	  status: participant.status,
+	  assignedCardIds: participant.assigned_card_ids || []
+	};
+
 	const result = replaceRandomAssignedCard(
 	  session,
-	  participant,
+	  participantForLogic,
 	  currentCardId,
 	  allDeckCards
 	);
@@ -963,6 +1056,7 @@ async function replaceBlindCard(req, res) {
 	}
 
 	await updateParticipantFields(participant.id, {
+	  assigned_card_ids: participantForLogic.assignedCardIds,
 	  last_seen_at: nowIso()
 	});
 
