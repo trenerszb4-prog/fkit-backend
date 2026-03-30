@@ -539,18 +539,16 @@ async function showCard(req, res) {
 	const { participantId } = req.params;
 	const { cardId } = req.body;
 
-	const participant = participants.find(
-	  (item) => item.id === participantId && item.status === 'active'
-	);
+	const participant = await getParticipantById(participantId);
 
-	if (!participant) {
+	if (!participant || participant.status !== 'active') {
 	  return res.status(404).json({
 		success: false,
 		message: 'Участник не найден или не активен'
 	  });
 	}
 
-	const session = await getSessionById(participant.sessionId);
+	const session = await getSessionById(participant.session_id);
 
 	if (!session) {
 	  return res.status(404).json({
@@ -560,7 +558,11 @@ async function showCard(req, res) {
 	}
 
 	if (session.status !== 'live') {
-	  markParticipantLeft(participant, 'session_inactive');
+	  await updateParticipantFields(participant.id, {
+		status: 'left',
+		left_at: nowIso(),
+		leave_reason: 'session_inactive'
+	  });
 
 	  return res.status(403).json({
 		success: false,
@@ -568,7 +570,9 @@ async function showCard(req, res) {
 	  });
 	}
 
-	touchParticipant(participant);
+	await updateParticipantFields(participant.id, {
+	  last_seen_at: nowIso()
+	});
 
 	const deck = await getDeckById(session.settings?.deckId);
 	if (!deck) {
@@ -591,78 +595,103 @@ async function showCard(req, res) {
 	const settings = session.settings || {};
 	const maxCardsOnScreen = Math.max(1, Number(settings.maxCardsOnScreen || 1));
 
-	if (settings.cardMode === 'random_subset') {
-	  const allowedCards = getOrAssignRandomCards(session, participant, allDeckCards);
-	  const allowedCardIds = allowedCards.map((item) => item.id);
-
-	  if (!allowedCardIds.includes(cardId)) {
-		return res.status(403).json({
-		  success: false,
-		  message: 'Эта карта недоступна участнику'
-		});
-	  }
-	}
-
-	const activeCards = screenCards
-	  .filter((item) => item.sessionId === session.id && item.isActive)
-	  .sort((a, b) => new Date(a.shownAt || 0) - new Date(b.shownAt || 0));
-
-	const existingParticipantCard = activeCards.find(
-	  (item) => item.participantId === participant.id
+	// 1. Получаем активные карты с экрана
+	const activeCardsResult = await pool.query(
+	  `
+	  SELECT *
+	  FROM screen_cards
+	  WHERE session_id = $1
+		AND is_active = true
+	  ORDER BY shown_at ASC
+	  `,
+	  [session.id]
 	);
 
-	if (existingParticipantCard) {
-	  existingParticipantCard.deckCardId = card.id;
-	  existingParticipantCard.imageUrl = card.image_url || card.imageUrl;
-	  existingParticipantCard.participantName = participant.displayName;
-	  existingParticipantCard.updatedAt = nowIso();
+	const activeCards = activeCardsResult.rows;
 
-	  const timer = startOrRestartTimer(session);
+	// 2. Проверяем — есть ли уже карта этого участника
+	const existingCard = activeCards.find(
+	  (c) => c.participant_id === participant.id
+	);
+
+	if (existingCard) {
+	  const result = await pool.query(
+		`
+		UPDATE screen_cards
+		SET deck_card_id = $1,
+			image_url = $2,
+			participant_name = $3,
+			updated_at = now()
+		WHERE id = $4
+		RETURNING *
+		`,
+		[
+		  card.id,
+		  card.image_url || card.imageUrl,
+		  participant.display_name,
+		  existingCard.id
+		]
+	  );
 
 	  return res.json({
 		success: true,
-		message: 'Карта участника обновлена на общем экране',
-		screenCard: existingParticipantCard,
-		timer: timer || null
+		message: 'Карта обновлена',
+		screenCard: result.rows[0]
 	  });
 	}
 
+	// 3. Если превышен лимит — удаляем самую старую
 	if (activeCards.length >= maxCardsOnScreen) {
-	  const oldestCard = activeCards[0];
-	  if (oldestCard) {
-		oldestCard.isActive = false;
-		oldestCard.removedAt = nowIso();
-	  }
+	  const oldest = activeCards[0];
+
+	  await pool.query(
+		`
+		UPDATE screen_cards
+		SET is_active = false,
+			removed_at = now()
+		WHERE id = $1
+		`,
+		[oldest.id]
+	  );
 	}
 
-	const newScreenCard = {
-	  id: `sc_${Date.now()}`,
-	  sessionId: session.id,
-	  participantId: participant.id,
-	  participantName: participant.displayName,
-	  deckCardId: card.id,
-	  imageUrl: card.image_url || card.imageUrl,
-	  isActive: true,
-	  shownAt: nowIso(),
-	  updatedAt: null,
-	  removedAt: null
-	};
-
-	screenCards.push(newScreenCard);
-
-	const timer = startOrRestartTimer(session);
+	// 4. Добавляем новую карту
+	const newCardResult = await pool.query(
+	  `
+	  INSERT INTO screen_cards (
+		id,
+		session_id,
+		participant_id,
+		participant_name,
+		deck_card_id,
+		image_url,
+		is_active,
+		shown_at
+	  )
+	  VALUES ($1,$2,$3,$4,$5,$6,true,now())
+	  RETURNING *
+	  `,
+	  [
+		`sc_${Date.now()}`,
+		session.id,
+		participant.id,
+		participant.display_name,
+		card.id,
+		card.image_url || card.imageUrl
+	  ]
+	);
 
 	return res.json({
 	  success: true,
-	  message: 'Карта отправлена на общий экран',
-	  screenCard: newScreenCard,
-	  timer: timer || null
+	  message: 'Карта показана',
+	  screenCard: newCardResult.rows[0]
 	});
+
   } catch (error) {
 	console.error('showCard error:', error);
 	return res.status(500).json({
 	  success: false,
-	  message: 'Ошибка отправки карты'
+	  message: 'Ошибка показа карты'
 	});
   }
 }
