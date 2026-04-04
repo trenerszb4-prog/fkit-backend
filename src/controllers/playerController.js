@@ -641,10 +641,6 @@ async function showCard(req, res) {
 	  });
 	}
 
-	await updateParticipantFields(participant.id, {
-	  last_seen_at: nowIso()
-	});
-
 	const deck = await getDeckById(session.settings?.deckId);
 	if (!deck) {
 	  return res.status(404).json({
@@ -653,8 +649,19 @@ async function showCard(req, res) {
 	  });
 	}
 
-	const allDeckCards = await getDeckCardsByDeckId(deck.id);
-	const card = allDeckCards.find((item) => item.id === cardId);
+const cardResult = await pool.query(
+	  `
+	  SELECT *
+	  FROM deck_cards
+	  WHERE id = $1
+		AND deck_id = $2
+		AND is_active = true
+	  LIMIT 1
+	  `,
+	  [cardId, deck.id]
+	);
+	
+	const card = cardResult.rows[0];
 
 	if (!card) {
 	  return res.status(404).json({
@@ -690,9 +697,9 @@ async function showCard(req, res) {
 	  }
 	}
 
-	const activeCardsResult = await pool.query(
+const activeCardsResult = await pool.query(
 	  `
-	  SELECT *
+	  SELECT id, participant_id
 	  FROM screen_cards
 	  WHERE session_id = $1
 		AND is_active = true
@@ -726,13 +733,15 @@ async function showCard(req, res) {
 		]
 	  );
 
-	  const timer = await startOrRestartTimer(session);
-
-const response = {
+startOrRestartTimer(session).catch((error) => {
+		console.error('startOrRestartTimer error:', error);
+	  });
+	  
+	  const response = {
 		success: true,
 		message: 'Карта обновлена',
 		screenCard: result.rows[0],
-		timer: timer || null
+		timer: null
 	  };
 	  
 	  broadcastToSession(session.id, {
@@ -781,13 +790,15 @@ const response = {
 	  ]
 	);
 
-	const timer = await startOrRestartTimer(session);
-
-const response = {
+startOrRestartTimer(session).catch((error) => {
+	  console.error('startOrRestartTimer error:', error);
+	});
+	
+	const response = {
 	  success: true,
 	  message: 'Карта показана',
 	  screenCard: newCardResult.rows[0],
-	  timer: timer || null
+	  timer: null
 	};
 	
 	// 👉 WebSocket событие
