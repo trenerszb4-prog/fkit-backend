@@ -50,7 +50,7 @@ async function authMiddleware(req, res, next) {
 	req.user = {
 	  id: user.id,
 	  email: user.email,
-	  name: user.display_name || 'Vitalii'
+	  name: user.display_name
 	};
 
 	next();

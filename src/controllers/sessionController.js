@@ -1,7 +1,6 @@
 const pool = require('../config/db');
 const { getServiceByCode } = require('../utils/services');
 const { generateUniquePinCode } = require('../utils/pin');
-const { participants, screenCards, timerStates, questionStates } = require('../data/db');
 const { cleanupStaleParticipants } = require('./playerController');
 
 const OPEN_SESSION_STATUSES = ['scheduled', 'live'];
@@ -338,19 +337,62 @@ async function scheduleSession(req, res) {
 	  }
 	}
 
-	participants.forEach((participant) => {
-	  if (participant.sessionId === session.id && participant.status === 'active') {
-		participant.status = 'left';
-		participant.leftAt = new Date().toISOString();
-	  }
-	});
-
-	screenCards.forEach((card) => {
-	  if (card.sessionId === session.id && card.isActive) {
-		card.isActive = false;
-		card.removedAt = new Date().toISOString();
-	  }
-	});
+await pool.query(
+	  `
+	  UPDATE participants
+	  SET status = 'left',
+		  left_at = NOW(),
+		  leave_reason = 'session_scheduled'
+	  WHERE session_id = $1
+		AND status = 'active'
+	  `,
+	  [session.id]
+	);
+	
+	await pool.query(
+	  `
+	  UPDATE screen_cards
+	  SET is_active = false,
+		  removed_at = NOW()
+	  WHERE session_id = $1
+		AND is_active = true
+	  `,
+	  [session.id]
+	);
+	
+	await pool.query(
+	  `
+	  INSERT INTO timer_states (
+		session_id,
+		duration_seconds,
+		started_at,
+		ends_at,
+		state,
+		updated_at
+	  )
+	  VALUES ($1, $2, NULL, NULL, 'idle', NOW())
+	  ON CONFLICT (session_id)
+	  DO UPDATE SET
+		duration_seconds = EXCLUDED.duration_seconds,
+		started_at = NULL,
+		ends_at = NULL,
+		state = 'idle',
+		updated_at = NOW()
+	  `,
+	  [session.id, (session.settings?.timerMinutes || 3) * 60]
+	);
+	
+	await pool.query(
+	  `
+	  INSERT INTO question_states (session_id, current_index, updated_at)
+	  VALUES ($1, 0, NOW())
+	  ON CONFLICT (session_id)
+	  DO UPDATE SET
+		current_index = 0,
+		updated_at = NOW()
+	  `,
+	  [session.id]
+	);
 
 	const result = await pool.query(
 	  `
@@ -403,29 +445,62 @@ async function startSession(req, res) {
 	  });
 	}
 
-	for (let i = participants.length - 1; i >= 0; i--) {
-	  if (participants[i].sessionId === session.id) {
-		participants.splice(i, 1);
-	  }
-	}
-
-	for (let i = screenCards.length - 1; i >= 0; i--) {
-	  if (screenCards[i].sessionId === session.id) {
-		screenCards.splice(i, 1);
-	  }
-	}
-
-	for (let i = timerStates.length - 1; i >= 0; i--) {
-	  if (timerStates[i].sessionId === session.id) {
-		timerStates.splice(i, 1);
-	  }
-	}
-
-	for (let i = questionStates.length - 1; i >= 0; i--) {
-	  if (questionStates[i].sessionId === session.id) {
-		questionStates.splice(i, 1);
-	  }
-	}
+await pool.query(
+	  `
+	  UPDATE participants
+	  SET status = 'left',
+		  left_at = NOW(),
+		  leave_reason = 'session_restarted'
+	  WHERE session_id = $1
+		AND status = 'active'
+	  `,
+	  [session.id]
+	);
+	
+	await pool.query(
+	  `
+	  UPDATE screen_cards
+	  SET is_active = false,
+		  removed_at = NOW()
+	  WHERE session_id = $1
+		AND is_active = true
+	  `,
+	  [session.id]
+	);
+	
+	await pool.query(
+	  `
+	  INSERT INTO timer_states (
+		session_id,
+		duration_seconds,
+		started_at,
+		ends_at,
+		state,
+		updated_at
+	  )
+	  VALUES ($1, $2, NULL, NULL, 'idle', NOW())
+	  ON CONFLICT (session_id)
+	  DO UPDATE SET
+		duration_seconds = EXCLUDED.duration_seconds,
+		started_at = NULL,
+		ends_at = NULL,
+		state = 'idle',
+		updated_at = NOW()
+	  `,
+	  [session.id, (session.settings?.timerMinutes || 3) * 60]
+	);
+	
+	await pool.query(
+	  `
+	  INSERT INTO question_states (session_id, current_index, updated_at)
+	  VALUES ($1, 0, NOW())
+	  ON CONFLICT (session_id)
+	  DO UPDATE SET
+		current_index = 0,
+		updated_at = NOW()
+	  `,
+	  [session.id]
+	);
 
 	const result = await pool.query(
 	  `
@@ -481,14 +556,32 @@ async function getSessionParticipants(req, res) {
 
 	cleanupStaleParticipants(session.id);
 
-	const list = participants.filter(
-	  (p) => p.sessionId === req.params.id && p.status === 'active'
+const result = await pool.query(
+	  `
+	  SELECT *
+	  FROM participants
+	  WHERE session_id = $1
+		AND status = 'active'
+	  ORDER BY joined_at ASC
+	  `,
+	  [req.params.id]
 	);
-
+	
+	const list = result.rows.map((p) => ({
+	  id: p.id,
+	  sessionId: p.session_id,
+	  displayName: p.display_name,
+	  source: p.source,
+	  status: p.status,
+	  joinedAt: p.joined_at,
+	  lastSeenAt: p.last_seen_at
+	}));
+	
 	return res.json({
 	  success: true,
 	  participants: list
 	});
+	
   } catch (e) {
 	console.error('getSessionParticipants error:', e);
 	return res.status(500).json({

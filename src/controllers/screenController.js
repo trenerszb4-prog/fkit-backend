@@ -46,7 +46,8 @@ async function getScreen(req, res) {
       });
     }
 
-    const deck = await getDeckById(session.settings?.deckId);
+    const deckId = session.settings?.deckId || null;
+    const deck = await getDeckById(deckId);
 
     const activeCardsResult = await pool.query(
       `

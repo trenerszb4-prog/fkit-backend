@@ -1,3 +1,4 @@
+const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
 const { createToken } = require('../utils/token');
 
@@ -13,7 +14,12 @@ async function login(req, res) {
 
   try {
 	const result = await pool.query(
-	  `SELECT * FROM users WHERE email = $1`,
+	  `
+	  SELECT id, email, password_hash, display_name, role
+	  FROM users
+	  WHERE email = $1
+	  LIMIT 1
+	  `,
 	  [email]
 	);
 
@@ -26,9 +32,8 @@ async function login(req, res) {
 	  });
 	}
 
-	// ВРЕМЕННО: простой вход для текущего пользователя
-	const isPasswordCorrect =
-	  user.email === 'witamin@ngs.ru' && password === '123456';
+	const passwordHash = user.password_hash || '';
+	const isPasswordCorrect = await bcrypt.compare(password, passwordHash);
 
 	if (!isPasswordCorrect) {
 	  return res.status(401).json({
@@ -37,15 +42,21 @@ async function login(req, res) {
 	  });
 	}
 
-	const token = createToken(user);
+	const token = createToken({
+	  id: user.id,
+	  email: user.email,
+	  display_name: user.display_name,
+	  role: user.role
+	});
 
 	return res.json({
 	  success: true,
 	  token,
 	  user: {
 		id: user.id,
-		name: user.name || 'Vitalii',
-		email: user.email
+		name: user.display_name || 'User',
+		email: user.email,
+		role: user.role
 	  }
 	});
   } catch (error) {
@@ -62,7 +73,7 @@ function me(req, res) {
 	success: true,
 	user: {
 	  id: req.user.id,
-	  name: req.user.name || 'Vitalii',
+	  name: req.user.name || 'User',
 	  email: req.user.email
 	}
   });

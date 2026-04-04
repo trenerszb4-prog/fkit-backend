@@ -574,7 +574,9 @@ async function getPlayerCards(req, res) {
 	  sessionId: participant.session_id,
 	  displayName: participant.display_name,
 	  status: participant.status,
-	  assignedCardIds: participant.assigned_card_ids || []
+	  assignedCardIds: Array.isArray(participant.assigned_card_ids)
+		? participant.assigned_card_ids
+		: []
 	};
 
 	if (session.settings?.cardMode === 'random_subset') {
@@ -587,7 +589,7 @@ async function getPlayerCards(req, res) {
 
 	const activeScreenCard = await getParticipantActiveCard(session.id, participant.id);
 
-return res.json({
+	return res.json({
 	  success: true,
 	  deck: formatDeck(deck),
 	  cards: availableCards.map(formatDeckCard),
