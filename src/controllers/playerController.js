@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { broadcastToSession } = require('../realtime/ws');
 
 const PARTICIPANT_HEARTBEAT_TTL_MS = 30 * 1000;
 
@@ -727,12 +728,18 @@ async function showCard(req, res) {
 
 	  const timer = await startOrRestartTimer(session);
 
-	  return res.json({
+const response = {
 		success: true,
 		message: 'Карта обновлена',
 		screenCard: result.rows[0],
 		timer: timer || null
+	  };
+	  
+	  broadcastToSession(session.id, {
+		type: 'card_updated'
 	  });
+	  
+	  return res.json(response);
 	}
 
 	if (activeCards.length >= maxCardsOnScreen) {
@@ -776,12 +783,19 @@ async function showCard(req, res) {
 
 	const timer = await startOrRestartTimer(session);
 
-	return res.json({
+const response = {
 	  success: true,
 	  message: 'Карта показана',
 	  screenCard: newCardResult.rows[0],
 	  timer: timer || null
+	};
+	
+	// 👉 WebSocket событие
+	broadcastToSession(session.id, {
+	  type: 'card_shown'
 	});
+	
+	return res.json(response);
   } catch (error) {
 	console.error('showCard error:', error);
 	return res.status(500).json({
@@ -850,6 +864,10 @@ async function recallCard(req, res) {
 	  });
 	}
 
+broadcastToSession(participant.session_id, {
+	  type: 'card_removed'
+	});
+	
 	return res.json({
 	  success: true,
 	  message: 'Карта отозвана'
@@ -894,6 +912,10 @@ async function leaveSession(req, res) {
 	  [participant.id, participant.session_id]
 	);
 
+broadcastToSession(participant.session_id, {
+	  type: 'participant_left'
+	});
+	
 	return res.json({
 	  success: true,
 	  message: 'Участник вышел из сессии'
@@ -994,6 +1016,11 @@ await pool.query(
 	  ]
 	);
 
+broadcastToSession(participant.session_id, {
+	  type: 'reaction_added',
+	  emoji
+	});
+	
 	return res.json({
 	  success: true
 	});
@@ -1103,6 +1130,10 @@ async function replaceBlindCard(req, res) {
 	  last_seen_at: nowIso()
 	});
 
+broadcastToSession(participant.session_id, {
+	  type: 'card_replaced'
+	});
+	
 	return res.json({
 	  success: true,
 	  message: 'Карта заменена',
