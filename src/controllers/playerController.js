@@ -610,46 +610,57 @@ async function showCard(req, res) {
 	const { participantId } = req.params;
 	const { cardId } = req.body;
 
-	const participant = await getParticipantById(participantId);
+	// 🔥 ОБЪЕДИНЁННЫЙ ЗАПРОС
+	const dataResult = await pool.query(
+	  `
+	  SELECT 
+		p.id as participant_id,
+		p.display_name,
+		p.status as participant_status,
+		p.session_id,
+	
+		s.id as session_id,
+		s.status as session_status,
+		s.settings,
+	
+		d.id as deck_id,
+		d.is_active as deck_active
+	
+	  FROM participants p
+	  JOIN sessions s ON s.id = p.session_id
+	  LEFT JOIN decks d ON d.id = (s.settings->>'deckId')
+	
+	  WHERE p.id = $1
+	  LIMIT 1
+	  `,
+	  [participantId]
+	);
 
-	if (!participant || participant.status !== 'active') {
+	const data = dataResult.rows[0];
+
+	if (!data || data.participant_status !== 'active') {
 	  return res.status(404).json({
 		success: false,
 		message: 'Участник не найден или не активен'
 	  });
 	}
 
-	const session = await getSessionById(participant.session_id);
-
-	if (!session) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Сессия не найдена'
-	  });
-	}
-
-	if (session.status !== 'live') {
-	  await updateParticipantFields(participant.id, {
-		status: 'left',
-		left_at: nowIso(),
-		leave_reason: 'session_inactive'
-	  });
-
+	if (data.session_status !== 'live') {
 	  return res.status(403).json({
 		success: false,
 		message: 'Сессия больше не активна'
 	  });
 	}
 
-	const deck = await getDeckById(session.settings?.deckId);
-	if (!deck) {
+	if (!data.deck_id || !data.deck_active) {
 	  return res.status(404).json({
 		success: false,
 		message: 'Колода не найдена'
 	  });
 	}
 
-const cardResult = await pool.query(
+	// 🔥 ПОЛУЧАЕМ КАРТУ (у тебя уже оптимизировано)
+	const cardResult = await pool.query(
 	  `
 	  SELECT *
 	  FROM deck_cards
@@ -658,9 +669,9 @@ const cardResult = await pool.query(
 		AND is_active = true
 	  LIMIT 1
 	  `,
-	  [cardId, deck.id]
+	  [cardId, data.deck_id]
 	);
-	
+
 	const card = cardResult.rows[0];
 
 	if (!card) {
@@ -670,34 +681,11 @@ const cardResult = await pool.query(
 	  });
 	}
 
-	const settings = session.settings || {};
+	const settings = data.settings || {};
 	const maxCardsOnScreen = Math.max(1, Number(settings.maxCardsOnScreen || 1));
 
-	const participantForLogic = {
-	  id: participant.id,
-	  sessionId: participant.session_id,
-	  displayName: participant.display_name,
-	  status: participant.status,
-	  assignedCardIds: participant.assigned_card_ids || []
-	};
-
-	if (settings.cardMode === 'random_subset') {
-	  const allowedCards = getOrAssignRandomCards(session, participantForLogic, allDeckCards);
-	  const allowedCardIds = allowedCards.map((item) => item.id);
-
-	  await updateParticipantFields(participant.id, {
-		assigned_card_ids: participantForLogic.assignedCardIds
-	  });
-
-	  if (!allowedCardIds.includes(cardId)) {
-		return res.status(403).json({
-		  success: false,
-		  message: 'Эта карта недоступна участнику'
-		});
-	  }
-	}
-
-const activeCardsResult = await pool.query(
+	// 🔥 АКТИВНЫЕ КАРТЫ (у тебя уже оптимизировано)
+	const activeCardsResult = await pool.query(
 	  `
 	  SELECT id, participant_id
 	  FROM screen_cards
@@ -705,15 +693,16 @@ const activeCardsResult = await pool.query(
 		AND is_active = true
 	  ORDER BY shown_at ASC
 	  `,
-	  [session.id]
+	  [data.session_id]
 	);
 
 	const activeCards = activeCardsResult.rows;
 
 	const existingCard = activeCards.find(
-	  (c) => c.participant_id === participant.id
+	  (c) => c.participant_id === data.participant_id
 	);
 
+	// 🔥 ОБНОВЛЕНИЕ КАРТЫ
 	if (existingCard) {
 	  const result = await pool.query(
 		`
@@ -727,30 +716,29 @@ const activeCardsResult = await pool.query(
 		`,
 		[
 		  card.id,
-		  card.image_url || card.imageUrl,
-		  participant.display_name,
+		  card.image_url,
+		  data.display_name,
 		  existingCard.id
 		]
 	  );
 
-startOrRestartTimer(session).catch((error) => {
-		console.error('startOrRestartTimer error:', error);
-	  });
-	  
+	  startOrRestartTimer({ id: data.session_id, settings: data.settings }).catch(console.error);
+
 	  const response = {
 		success: true,
 		message: 'Карта обновлена',
 		screenCard: result.rows[0],
 		timer: null
 	  };
-	  
-	  broadcastToSession(session.id, {
+
+	  broadcastToSession(data.session_id, {
 		type: 'card_updated'
 	  });
-	  
+
 	  return res.json(response);
 	}
 
+	// 🔥 УДАЛЕНИЕ СТАРОЙ КАРТЫ (если лимит)
 	if (activeCards.length >= maxCardsOnScreen) {
 	  const oldest = activeCards[0];
 
@@ -765,6 +753,7 @@ startOrRestartTimer(session).catch((error) => {
 	  );
 	}
 
+	// 🔥 ВСТАВКА НОВОЙ КАРТЫ
 	const newCardResult = await pool.query(
 	  `
 	  INSERT INTO screen_cards (
@@ -782,31 +771,29 @@ startOrRestartTimer(session).catch((error) => {
 	  `,
 	  [
 		`sc_${Date.now()}`,
-		session.id,
-		participant.id,
-		participant.display_name,
+		data.session_id,
+		data.participant_id,
+		data.display_name,
 		card.id,
-		card.image_url || card.imageUrl
+		card.image_url
 	  ]
 	);
 
-startOrRestartTimer(session).catch((error) => {
-	  console.error('startOrRestartTimer error:', error);
-	});
-	
+	startOrRestartTimer({ id: data.session_id, settings: data.settings }).catch(console.error);
+
 	const response = {
 	  success: true,
 	  message: 'Карта показана',
 	  screenCard: newCardResult.rows[0],
 	  timer: null
 	};
-	
-	// 👉 WebSocket событие
-	broadcastToSession(session.id, {
+
+	broadcastToSession(data.session_id, {
 	  type: 'card_shown'
 	});
-	
+
 	return res.json(response);
+
   } catch (error) {
 	console.error('showCard error:', error);
 	return res.status(500).json({
