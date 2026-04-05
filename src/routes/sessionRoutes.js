@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 
 const sessionController = require('../controllers/sessionController');
-const { protect } = require('../middlewares/authMiddleware'); // Правильный путь и импорт
+const { protect } = require('../middleware/authMiddleware'); // Правильный путь и импорт
 
 // Защищаем ВСЕ маршруты сессий. Без токена сюда никто не пройдет!
 router.use(protect);
