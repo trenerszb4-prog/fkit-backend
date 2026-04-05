@@ -126,7 +126,7 @@ async function getAdminData(req, res) {
 // 2. Ручное изменение подписки
 async function updateSubscription(req, res) {
   try {
-	const SUPER_ADMIN = 'test@mail.ru'; 
+	const SUPER_ADMIN = 'support@f-kit.ru'; 
 	const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
 	if (!userRes.rows[0] || userRes.rows[0].email !== SUPER_ADMIN) {
 	  return res.status(403).json({ success: false, message: 'Доступ запрещен' });
@@ -153,7 +153,7 @@ async function updateSubscription(req, res) {
 // 3. Закрытие всех активных сессий пользователя
 async function closeUserSessions(req, res) {
   try {
-	const SUPER_ADMIN = 'test@mail.ru'; // Твой email
+	const SUPER_ADMIN = 'support@f-kit.ru'; // Твой email
 	const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
 	if (!userRes.rows[0] || userRes.rows[0].email !== SUPER_ADMIN) {
 	  return res.status(403).json({ success: false, message: 'Доступ запрещен' });
@@ -173,7 +173,7 @@ async function closeUserSessions(req, res) {
 // 4. Полное удаление пользователя
 async function deleteUser(req, res) {
   try {
-	const SUPER_ADMIN = 'test@mail.ru'; // Твой email
+	const SUPER_ADMIN = 'support@f-kit.ru'; // Твой email
 	const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
 	if (!userRes.rows[0] || userRes.rows[0].email !== SUPER_ADMIN) {
 	  return res.status(403).json({ success: false, message: 'Доступ запрещен' });
