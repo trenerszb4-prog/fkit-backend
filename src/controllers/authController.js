@@ -150,4 +150,48 @@ async function updateSubscription(req, res) {
   }
 }
 
-module.exports = { register, login, getMe, getAdminData, updateSubscription };
+// 3. Закрытие всех активных сессий пользователя
+async function closeUserSessions(req, res) {
+  try {
+	const SUPER_ADMIN = 'test@mail.ru'; // Твой email
+	const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+	if (!userRes.rows[0] || userRes.rows[0].email !== SUPER_ADMIN) {
+	  return res.status(403).json({ success: false, message: 'Доступ запрещен' });
+	}
+
+	const { targetUserId } = req.body;
+	// Удаляем все сессии этого пользователя со статусом live
+	await pool.query("DELETE FROM sessions WHERE user_id = $1 AND status = 'live'", [targetUserId]);
+
+	res.json({ success: true, message: 'Активные сессии закрыты' });
+  } catch (error) {
+	console.error('Close Sessions Error:', error);
+	res.status(500).json({ success: false, message: 'Ошибка закрытия сессий' });
+  }
+}
+
+// 4. Полное удаление пользователя
+async function deleteUser(req, res) {
+  try {
+	const SUPER_ADMIN = 'test@mail.ru'; // Твой email
+	const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+	if (!userRes.rows[0] || userRes.rows[0].email !== SUPER_ADMIN) {
+	  return res.status(403).json({ success: false, message: 'Доступ запрещен' });
+	}
+
+	const { targetUserId } = req.body;
+	
+	// ВАЖНО: Сначала удаляем ВСЕ сессии пользователя, чтобы база данных не ругалась на связанные данные
+	await pool.query('DELETE FROM sessions WHERE user_id = $1', [targetUserId]);
+	
+	// Теперь удаляем саму учетную запись
+	await pool.query('DELETE FROM users WHERE id = $1', [targetUserId]);
+
+	res.json({ success: true, message: 'Пользователь и его сессии удалены' });
+  } catch (error) {
+	console.error('Delete User Error:', error);
+	res.status(500).json({ success: false, message: 'Ошибка удаления пользователя' });
+  }
+}
+
+module.exports = { register, login, getMe, getAdminData, updateSubscription, closeUserSessions, deleteUser };
