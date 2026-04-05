@@ -2,6 +2,7 @@ const pool = require('../config/db');
 const { getServiceByCode } = require('../utils/services');
 const { generateUniquePinCode } = require('../utils/pin');
 const { cleanupStaleParticipants } = require('./playerController');
+const { broadcastToSession } = require('../realtime/ws');
 
 const OPEN_SESSION_STATUSES = ['scheduled', 'live'];
 const MAX_OPEN_SESSIONS_PER_USER = 3;
@@ -289,6 +290,7 @@ const {
 	  ]
 	);
 
+broadcastToSession(req.params.id, { type: 'session_updated' });
 	return res.json({
 	  success: true,
 	  message: 'Сессия обновлена',
@@ -407,6 +409,7 @@ await pool.query(
 	  [req.params.id, req.user.id]
 	);
 
+	broadcastToSession(req.params.id, { type: 'session_updated' });
 	return res.json({
 	  success: true,
 	  message: 'Сессия запланирована',
@@ -516,6 +519,7 @@ await pool.query(
 	  [req.params.id, req.user.id]
 	);
 
+	broadcastToSession(req.params.id, { type: 'session_updated' });
 	return res.json({
 	  success: true,
 	  message: 'Сессия начата',
@@ -603,7 +607,8 @@ async function deleteSession(req, res) {
 	  `,
 	  [req.params.id, req.user.id]
 	);
-
+	
+	broadcastToSession(req.params.id, { type: 'session_deleted' });
 	return res.json({
 	  success: true
 	});
@@ -680,6 +685,7 @@ async function kickParticipant(req, res) {
 	  [participant.id, session.id]
 	);
 
+	broadcastToSession(session.id, { type: 'participant_left', participantId: participant.id });
 	return res.json({
 	  success: true,
 	  message: 'Участник удалён из комнаты',
