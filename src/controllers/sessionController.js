@@ -627,10 +627,10 @@ async function kickParticipant(req, res) {
 	  `
 	  SELECT *
 	  FROM sessions
-	  WHERE id = $1
+	  WHERE id = $1 AND user_id = $2
 	  LIMIT 1
 	  `,
-	  [req.params.id]
+	  [req.params.id, req.user.id] // 🔥 Добавили проверку владельца сессии
 	);
 
 	const session = sessionResult.rows[0];
@@ -638,7 +638,7 @@ async function kickParticipant(req, res) {
 	if (!session) {
 	  return res.status(404).json({
 		success: false,
-		message: 'Сессия не найдена'
+		message: 'Сессия не найдена или вы не являетесь ее владельцем'
 	  });
 	}
 
