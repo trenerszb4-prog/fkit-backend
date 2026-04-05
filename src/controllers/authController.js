@@ -12,7 +12,18 @@ const generateToken = (id) => {
 // Регистрация
 async function register(req, res) {
   try {
-	const { email, password } = req.body;
+	// === ВРЕМЕННАЯ ФУНКЦИЯ БЕТА-ТЕСТА (НАЧАЛО) ===
+	// Добавили promoCode для проверки на бэкенде
+	const { email, password, promoCode } = req.body;
+	const BETA_PROMO = 'START2026';
+
+	if (promoCode !== BETA_PROMO) {
+	  return res.status(403).json({ 
+		success: false, 
+		message: 'Уважаемые пользователи, проект находится на стадии бета-тестирования, регистрация недоступна' 
+	  });
+	}
+	// === ВРЕМЕННАЯ ФУНКЦИЯ БЕТА-ТЕСТА (КОНЕЦ) ===
 
 	if (!email || !password) {
 	  return res.status(400).json({ success: false, message: 'Введите email и пароль' });
