@@ -2,8 +2,10 @@ const express = require('express');
 const router = express.Router();
 
 const hubController = require('../controllers/hubController');
-const authMiddleware = require('../middleware/auth');
+// Исправлено: путь к файлу и импорт функции { protect }
+const { protect } = require('../middleware/authMiddleware');
 
-router.get('/', authMiddleware, hubController.getHub);
+// Исправлено: используем protect вместо authMiddleware
+router.get('/', protect, hubController.getHub);
 
 module.exports = router;
