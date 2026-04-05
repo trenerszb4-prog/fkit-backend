@@ -4,9 +4,11 @@ const router = express.Router();
 const screenController = require('../controllers/screenController');
 const timerController = require('../controllers/timerController');
 const questionController = require('../controllers/questionController');
-const authMiddleware = require('../middleware/auth');
+// ИСПРАВЛЕНО: правильное название файла и импорт
+const { protect } = require('../middleware/authMiddleware');
 
-router.use(authMiddleware);
+// ИСПРАВЛЕНО: защищаем все пути проектора через protect
+router.use(protect);
 
 router.get('/:id', screenController.getScreen);
 router.get('/:id/state', screenController.getScreenState);
