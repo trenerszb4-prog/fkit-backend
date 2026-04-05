@@ -1,11 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const { register, login, getMe } = require('../controllers/authController');
+const { protect } = require('../middlewares/authMiddleware');
 
-const authController = require('../controllers/authController');
-const authMiddleware = require('../middleware/auth');
-
-router.post('/login', authController.login);
-router.get('/me', authMiddleware, authController.me);
-router.post('/logout', authMiddleware, authController.logout);
+router.post('/register', register);
+router.post('/login', login);
+router.get('/me', protect, getMe); // Этот маршрут защищен токеном
 
 module.exports = router;

@@ -1,92 +1,83 @@
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
-const { createToken } = require('../utils/token');
 
-async function login(req, res) {
-  const { email, password } = req.body;
+// Генерация токена (на 30 дней)
+const generateToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, {
+	expiresIn: '30d',
+  });
+};
 
-  if (!email || !password) {
-	return res.status(400).json({
-	  success: false,
-	  message: 'Введите email и пароль'
-	});
-  }
-
+// Регистрация
+async function register(req, res) {
   try {
-	const result = await pool.query(
-	  `
-	  SELECT id, email, password_hash, display_name, role
-	  FROM users
-	  WHERE email = $1
-	  LIMIT 1
-	  `,
-	  [email]
+	const { email, password } = req.body;
+
+	if (!email || !password) {
+	  return res.status(400).json({ success: false, message: 'Введите email и пароль' });
+	}
+
+	// Проверяем, свободен ли email
+	const userExists = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+	if (userExists.rows.length > 0) {
+	  return res.status(400).json({ success: false, message: 'Пользователь с таким email уже существует' });
+	}
+
+	// Шифруем пароль
+	const salt = await bcrypt.genSalt(10);
+	const hashedPassword = await bcrypt.hash(password, salt);
+
+	// Создаем пользователя
+	const newUser = await pool.query(
+	  'INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email',
+	  [email, hashedPassword]
 	);
 
-	const user = result.rows[0];
+	const user = newUser.rows[0];
 
-	if (!user) {
-	  return res.status(401).json({
-		success: false,
-		message: 'Неверный email или пароль'
-	  });
-	}
-
-	const passwordHash = user.password_hash || '';
-	const isPasswordCorrect = await bcrypt.compare(password, passwordHash);
-
-	if (!isPasswordCorrect) {
-	  return res.status(401).json({
-		success: false,
-		message: 'Неверный email или пароль'
-	  });
-	}
-
-	const token = createToken({
-	  id: user.id,
-	  email: user.email,
-	  display_name: user.display_name,
-	  role: user.role
-	});
-
-	return res.json({
+	res.status(201).json({
 	  success: true,
-	  token,
-	  user: {
-		id: user.id,
-		name: user.display_name || 'User',
-		email: user.email,
-		role: user.role
-	  }
+	  user: { id: user.id, email: user.email },
+	  token: generateToken(user.id)
 	});
   } catch (error) {
-	console.error('LOGIN ERROR:', error);
-	return res.status(500).json({
-	  success: false,
-	  message: 'Ошибка сервера'
-	});
+	console.error('Register error:', error);
+	res.status(500).json({ success: false, message: 'Ошибка при регистрации' });
   }
 }
 
-function me(req, res) {
-  return res.json({
-	success: true,
-	user: {
-	  id: req.user.id,
-	  name: req.user.name || 'User',
-	  email: req.user.email
+// Логин
+async function login(req, res) {
+  try {
+	const { email, password } = req.body;
+
+	const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+	const user = result.rows[0];
+
+	if (user && (await bcrypt.compare(password, user.password_hash))) {
+	  res.json({
+		success: true,
+		user: { id: user.id, email: user.email },
+		token: generateToken(user.id)
+	  });
+	} else {
+	  res.status(401).json({ success: false, message: 'Неверный email или пароль' });
 	}
-  });
+  } catch (error) {
+	console.error('Login error:', error);
+	res.status(500).json({ success: false, message: 'Ошибка при входе' });
+  }
 }
 
-function logout(req, res) {
-  return res.json({
-	success: true
-  });
+// Получение данных себя (по токену)
+async function getMe(req, res) {
+  try {
+	const result = await pool.query('SELECT id, email, created_at FROM users WHERE id = $1', [req.user.id]);
+	res.json({ success: true, user: result.rows[0] });
+  } catch (error) {
+	res.status(500).json({ success: false, message: 'Ошибка сервера' });
+  }
 }
 
-module.exports = {
-  login,
-  me,
-  logout
-};
+module.exports = { register, login, getMe };
