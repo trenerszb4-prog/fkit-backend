@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { broadcastToSession } = require('../realtime/ws');
 
 function formatSession(session) {
   return {
@@ -128,7 +129,8 @@ async function clearScreen(req, res) {
       `,
       [req.params.id]
     );
-
+    
+    broadcastToSession(req.params.id, { type: 'screen_cleared' })
     return res.json({ success: true });
   } catch (error) {
     console.error('clearScreen error:', error);
@@ -205,6 +207,11 @@ async function deleteScreenCard(req, res) {
         message: 'Карта на экране не найдена'
       });
     }
+
+    broadcastToSession(req.params.id, { 
+      type: 'card_removed', 
+      screenCardId: req.params.screenCardId 
+    });
 
     return res.json({
       success: true,

@@ -378,6 +378,8 @@ function cleanupStaleParticipants(sessionId = null) {
 		  `,
 		  [participant.id, participant.session_id]
 		);
+		broadcastToSession(participant.session_id, { type: 'participant_left' });
+		broadcastToSession(participant.session_id, { type: 'card_removed' });
 	  }
 	}
   })().catch((error) => {
@@ -441,6 +443,10 @@ async function joinByPin(req, res) {
 		participant.lastSeenAt
 	  ]
 	);
+
+	broadcastToSession(session.id, {
+	  type: 'session_updated'
+	});
 
 	return res.status(201).json({
 	  success: true,
