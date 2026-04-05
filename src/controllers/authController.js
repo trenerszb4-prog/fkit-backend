@@ -90,4 +90,64 @@ async function getMe(req, res) {
   }
 }
 
-module.exports = { register, login, getMe };
+// --- АДМИНСКИЕ ФУНКЦИИ ---
+
+// 1. Получение статистики и списка всех пользователей
+async function getAdminData(req, res) {
+  try {
+	// ВПИШИ СЮДА СВОЙ EMAIL
+	const SUPER_ADMIN = 'support@f-kit.ru'; 
+
+	// Проверяем, кто делает запрос
+	const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+	if (!userRes.rows[0] || userRes.rows[0].email !== SUPER_ADMIN) {
+	  return res.status(403).json({ success: false, message: 'Доступ запрещен. Вы не администратор.' });
+	}
+
+	// Собираем данные
+	const usersResult = await pool.query('SELECT id, email, subscription_type, subscription_expires_at, created_at FROM users ORDER BY created_at DESC');
+	const totalUsers = usersResult.rowCount;
+	
+	// Считаем "одновременные подключения" (количество сессий со статусом live)
+	const liveSessionsResult = await pool.query("SELECT COUNT(*) FROM sessions WHERE status = 'live'");
+	const liveSessions = liveSessionsResult.rows[0].count;
+
+	res.json({
+	  success: true,
+	  stats: { totalUsers, liveSessions },
+	  users: usersResult.rows
+	});
+  } catch (error) {
+	console.error('Admin Data Error:', error);
+	res.status(500).json({ success: false, message: 'Ошибка сервера' });
+  }
+}
+
+// 2. Ручное изменение подписки
+async function updateSubscription(req, res) {
+  try {
+	const SUPER_ADMIN = 'test@mail.ru'; 
+	const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+	if (!userRes.rows[0] || userRes.rows[0].email !== SUPER_ADMIN) {
+	  return res.status(403).json({ success: false, message: 'Доступ запрещен' });
+	}
+
+	const { targetUserId, days } = req.body;
+
+	// Устанавливаем новую дату (текущее время + X дней)
+	const newDate = new Date();
+	newDate.setDate(newDate.getDate() + parseInt(days));
+
+	await pool.query(
+	  'UPDATE users SET subscription_expires_at = $1 WHERE id = $2',
+	  [newDate, targetUserId]
+	);
+
+	res.json({ success: true, message: 'Подписка обновлена' });
+  } catch (error) {
+	console.error('Update Sub Error:', error);
+	res.status(500).json({ success: false, message: 'Ошибка обновления' });
+  }
+}
+
+module.exports = { register, login, getMe, getAdminData, updateSubscription };

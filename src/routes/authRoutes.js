@@ -1,10 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, getMe } = require('../controllers/authController');
+
+// НОВОЕ: Мы добавили getAdminData и updateSubscription в список загружаемых функций
+const { register, login, getMe, getAdminData, updateSubscription } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
 
 router.post('/register', register);
 router.post('/login', login);
 router.get('/me', protect, getMe); // Этот маршрут защищен токеном
+
+// --- НОВЫЕ МАРШРУТЫ ДЛЯ АДМИНКИ ---
+// Они тоже защищены токеном (protect), чтобы никто чужой не смог отправить запрос
+router.get('/admin/data', protect, getAdminData);
+router.post('/admin/subscription', protect, updateSubscription);
 
 module.exports = router;
