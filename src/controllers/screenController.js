@@ -220,8 +220,90 @@ async function deleteScreenCard(req, res) {
   }
 }
 
+async function getScreenState(req, res) {
+  try {
+    const sessionId = req.params.id;
+
+    // 🔥 один запрос: session + deck
+    const sessionResult = await pool.query(
+      `
+      SELECT 
+        s.id,
+        s.pin_code,
+        s.settings,
+        d.back_image_url
+      FROM sessions s
+      LEFT JOIN decks d ON d.id = (s.settings->>'deckId')
+      WHERE s.id = $1
+      LIMIT 1
+      `,
+      [sessionId]
+    );
+
+    const session = sessionResult.rows[0];
+
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Сессия не найдена'
+      });
+    }
+
+    // 🔥 только нужные поля для карт
+    const cardsResult = await pool.query(
+      `
+      SELECT 
+        id,
+        image_url,
+        participant_name
+      FROM screen_cards
+      WHERE session_id = $1
+        AND is_active = true
+      ORDER BY shown_at ASC
+      `,
+      [sessionId]
+    );
+
+    // 🔥 только COUNT (без загрузки участников)
+    const countResult = await pool.query(
+      `
+      SELECT COUNT(*)::int as count
+      FROM participants
+      WHERE session_id = $1
+        AND status = 'active'
+      `,
+      [sessionId]
+    );
+
+    return res.json({
+      success: true,
+      session: {
+        id: session.id,
+        pinCode: session.pin_code
+      },
+      deck: {
+        backImageUrl: session.back_image_url
+      },
+      screenCards: cardsResult.rows.map(c => ({
+        id: c.id,
+        imageUrl: c.image_url,
+        participantName: c.participant_name
+      })),
+      participantsCount: countResult.rows[0].count
+    });
+
+  } catch (error) {
+    console.error('getScreenState error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Ошибка получения состояния экрана'
+    });
+  }
+}
+
 module.exports = {
   getScreen,
+  getScreenState,
   clearScreen,
   deleteScreenCard,
   getScreenReactions

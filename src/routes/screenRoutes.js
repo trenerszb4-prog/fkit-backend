@@ -9,6 +9,7 @@ const authMiddleware = require('../middleware/auth');
 router.use(authMiddleware);
 
 router.get('/:id', screenController.getScreen);
+router.get('/:id/state', screenController.getScreenState);
 router.post('/:id/clear', screenController.clearScreen);
 router.delete('/:id/cards/:screenCardId', screenController.deleteScreenCard);
 
