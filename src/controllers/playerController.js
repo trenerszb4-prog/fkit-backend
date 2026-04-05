@@ -444,8 +444,11 @@ async function joinByPin(req, res) {
 	  ]
 	);
 
+// Сообщаем экрану, что зашел новый участник
 	broadcastToSession(session.id, {
-	  type: 'session_updated'
+	  type: 'participant_joined',
+	  participantId: participant.id,
+	  displayName: participant.displayName
 	});
 
 	return res.status(201).json({
