@@ -129,8 +129,11 @@ async function clearScreen(req, res) {
       `,
       [req.params.id]
     );
-    
-    broadcastToSession(req.params.id, { type: 'screen_cleared' })
+
+    // 🔥 БРОДКАСТ: Сообщаем всем телефонам, что стол очищен
+    const { broadcastToSession } = require('../realtime/ws');
+    broadcastToSession(req.params.id, { type: 'screen_cleared' });
+
     return res.json({ success: true });
   } catch (error) {
     console.error('clearScreen error:', error);
@@ -208,15 +211,20 @@ async function deleteScreenCard(req, res) {
       });
     }
 
+    const deletedCard = result.rows[0];
+
+    // 🔥 БРОДКАСТ: Сообщаем конкретному телефону, что его карту удалили
+    const { broadcastToSession } = require('../realtime/ws');
     broadcastToSession(req.params.id, { 
       type: 'card_removed', 
-      screenCardId: req.params.screenCardId 
+      screenCardId: req.params.screenCardId,
+      participantId: deletedCard.participant_id
     });
 
     return res.json({
       success: true,
       message: 'Карта удалена',
-      screenCard: result.rows[0]
+      screenCard: deletedCard
     });
   } catch (error) {
     console.error('deleteScreenCard error:', error);
