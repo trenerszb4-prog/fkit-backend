@@ -232,7 +232,7 @@ async function forgotPassword(req, res) {
 
 	// Отправляем письмо
 	await transporter.sendMail({
-	  from: '"Команда F-Kit" <info@f-kit.ru>', // 🔴 ДОЛЖНО СОВПАДАТЬ С user В НАСТРОЙКАХ ВЫШЕ
+	  from: '"Команда F-Kit" <support@f-kit.ru>', // 🔴 ДОЛЖНО СОВПАДАТЬ С user В НАСТРОЙКАХ ВЫШЕ
 	  to: email,
 	  subject: 'Восстановление пароля в F-Kit HUB',
 	  text: `Здравствуйте!\n\nВаш новый пароль для входа: ${newPassword}\n\nПожалуйста, используйте его для авторизации. После входа вы сможете изменить его (в будущих обновлениях).`
