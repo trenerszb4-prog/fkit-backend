@@ -21,17 +21,22 @@ async function protect(req, res, next) {
 
 	  req.user = result.rows[0];
 	  
-	  // --- НОВОЕ: ОБНОВЛЯЕМ ВРЕМЯ ПОСЛЕДНЕЙ АКТИВНОСТИ ---
-	  // Мы ищем текущую сессию пользователя (которая привязана к его токену) 
-	  // и обновляем время на "прямо сейчас"
-	  if (req.user && req.headers.authorization) {
-		const currentToken = req.headers.authorization.split(' ')[1];
-		await pool.query(
-		  "UPDATE sessions SET last_active_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND token = $2",
-		  [req.user.id, currentToken]
-		);
+	  // --- НОВОЕ: БЕЗОПАСНОЕ ОБНОВЛЕНИЕ ВРЕМЕНИ ---
+	  // Оборачиваем в try...catch, чтобы ошибка базы НЕ выкидывала пользователя
+	  if (req.user) {
+		try {
+		  // Убрали "AND token = ...", обновляем просто по user_id
+		  await pool.query(
+			"UPDATE sessions SET last_active_at = CURRENT_TIMESTAMP WHERE user_id = $1",
+			[req.user.id]
+		  );
+		} catch (dbError) {
+		  // Если вдруг базы нет или колонки нет, сервер просто напишет это в лог, 
+		  // но пропустит пользователя дальше!
+		  console.error('Некритичная ошибка продления сессии:', dbError.message);
+		}
 	  }
-	  // ----------------------------------------------------
+	  // --------------------------------------------
 	  
 	  next(); // Пропускаем дальше к контроллеру
 	} catch (error) {
