@@ -20,6 +20,19 @@ async function protect(req, res, next) {
 	  }
 
 	  req.user = result.rows[0];
+	  
+	  // --- НОВОЕ: ОБНОВЛЯЕМ ВРЕМЯ ПОСЛЕДНЕЙ АКТИВНОСТИ ---
+	  // Мы ищем текущую сессию пользователя (которая привязана к его токену) 
+	  // и обновляем время на "прямо сейчас"
+	  if (req.user && req.headers.authorization) {
+		const currentToken = req.headers.authorization.split(' ')[1];
+		await pool.query(
+		  "UPDATE sessions SET last_active_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND token = $2",
+		  [req.user.id, currentToken]
+		);
+	  }
+	  // ----------------------------------------------------
+	  
 	  next(); // Пропускаем дальше к контроллеру
 	} catch (error) {
 	  console.error('Auth middleware error:', error);

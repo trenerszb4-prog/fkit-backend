@@ -4,6 +4,8 @@ const { PORT } = require('./src/config/env');
 
 const { initWebSocket } = require('./src/realtime/ws');
 
+require('./src/cron');
+
 const server = http.createServer(app);
 
 // 👉 подключаем WebSocket
