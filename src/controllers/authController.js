@@ -273,31 +273,33 @@ async function confirmPasswordReset(req, res) {
 	// 3. Сохраняем в базу
 	await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedPassword, userId]);
 
-	// 4. ВТОРОЕ ПИСЬМО: Отправляем сам пароль в фирменном стиле
+// 4. ВТОРОЕ ПИСЬМО: Отправляем сам пароль в фирменном стиле (ОБНОВЛЕННЫЙ СТИЛЬ)
 	await transporter.sendMail({
 	  from: '"Команда F-Kit" <support@f-kit.ru>',
 	  to: userEmail,
 	  subject: 'Ваш новый пароль от F-Kit HUB',
 	  html: `
-		<div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 30px; background-color: #090e1a; color: #ffffff; border-radius: 12px;">
-		  <h2 style="color: #FFF993; margin-top: 0;">Пароль успешно изменен!</h2>
-		  <p style="font-size: 15px; color: #e0e0e0;">Ваш новый пароль для входа в панель ведущего:</p>
+		<div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 30px; background-color: #090e1a; color: #ffffff; border-radius: 12px; text-align: center;">
+		  <h2 style="color: #FFF993; margin-top: 0; text-align: center;">Пароль успешно изменен!</h2>
+		  <p style="font-size: 15px; color: #e0e0e0; text-align: center;">Ваш новый пароль для входа в панель ведущего:</p>
 		  
-		  <div style="text-align: center; margin: 25px 0;">
-			<span style="display: inline-block; font-size: 24px; font-weight: bold; background: rgba(255, 249, 147, 0.1); color: #FFF993; padding: 15px 30px; border-radius: 8px; border: 1px dashed #FFF993; letter-spacing: 2px;">
+		  <div style="margin: 25px auto;">
+			<div style="display: inline-block; width: 220px; font-size: 16px; font-weight: normal; background: rgba(255, 249, 147, 0.05); color: #FFF993; padding: 12px 0; border-radius: 8px; border: 1px dashed #FFF993; letter-spacing: 2px; text-align: center; box-sizing: border-box; height: 46px; line-height: 22px;">
 			  ${newPassword}
-			</span>
+			</div>
 		  </div>
 		  
-		  <div style="text-align: center; margin-top: 30px;">
-			<a href="https://f-kit.ru/login" style="display: inline-block; padding: 14px 30px; background-color: #FFF993; color: #000000; text-decoration: none; border-radius: 8px; font-weight: bold;">Войти в аккаунт</a>
+		  <div style="margin-top: 25px;">
+			<a href="https://f-kit.ru/login" style="display: inline-block; width: 220px; padding: 12px 0; background-color: #FFF993; color: #000000; text-decoration: none; border-radius: 8px; font-weight: normal; font-size: 16px; text-align: center; box-sizing: border-box; height: 46px; line-height: 22px; border: 1px solid #FFF993;">
+			  Войти в аккаунт
+			</a>
 		  </div>
 		</div>
 	  `
 	});
 
 	// 5. ЭКРАН УСПЕХА: Показываем в браузере (БЕЗ ПАРОЛЯ)
-	const htmlResponse = `
+const htmlResponse = `
 	  <!DOCTYPE html>
 	  <html lang="ru">
 	  <head>
@@ -305,11 +307,16 @@ async function confirmPasswordReset(req, res) {
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<title>Пароль изменен</title>
 	  </head>
-	  <body style="font-family: 'TildaSans', Arial, sans-serif; background: #090e1a; background-image: radial-gradient(circle at top center, #162854 0%, #05080f 80%); color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
-		<div style="background: rgba(255,255,255,0.05); padding: 40px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); text-align: center; max-width: 420px; width: 90%; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);">
-		  <h2 style="color: #FFF993; margin-top: 0; font-size: 26px;">Пароль успешно сброшен!</h2>
-		  <p style="font-size: 16px; line-height: 1.6; color: rgba(255,255,255,0.8); margin-bottom: 30px;">Новый пароль только что был отправлен на вашу электронную почту.</p>
-		  <a href="https://f-kit.ru/login" style="display: inline-block; background: #FFF993; color: #000; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; transition: all 0.2s ease;">Вернуться к входу</a>
+	  <body style="font-family: 'Segoe UI', Arial, sans-serif; background: #090e1a; background-image: radial-gradient(circle at top center, #162854 0%, #05080f 80%); color: #fff; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 24px; box-sizing: border-box;">
+		<div style="background: rgba(255,255,255,0.05); padding: 40px 24px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); text-align: center; max-width: 400px; width: 100%; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-sizing: border-box;">
+		  <h2 style="color: #FFF993; margin-top: 0; font-size: 24px; font-weight: normal;">Пароль успешно сброшен!</h2>
+		  <p style="font-size: 15px; line-height: 1.6; color: rgba(255,255,255,0.8); margin-bottom: 35px;">Новый пароль только что был отправлен на вашу электронную почту.</p>
+		  
+		  <div style="text-align: center;">
+			<a href="https://f-kit.ru/login" style="display: inline-block; width: 220px; padding: 12px 0; background-color: #FFF993; color: #000000; text-decoration: none; border-radius: 8px; font-weight: normal; font-size: 16px; text-align: center; box-sizing: border-box;">
+			  Вернуться к входу
+			</a>
+		  </div>
 		</div>
 	  </body>
 	  </html>
