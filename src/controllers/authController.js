@@ -207,42 +207,104 @@ async function deleteUser(req, res) {
   }
 }
 
-// === 2. НОВАЯ ФУНКЦИЯ ВОССТАНОВЛЕНИЯ ПАРОЛЯ ===
+// === 1. ОБНОВЛЕННАЯ ФУНКЦИЯ ЗАПРОСА СБРОСА ===
 async function forgotPassword(req, res) {
   try {
 	const { email } = req.body;
+	if (!email) return res.status(400).json({ success: false, message: 'Укажите email' });
 
-	if (!email) {
-	  return res.status(400).json({ success: false, message: 'Укажите email' });
-	}
-
-	// Ищем пользователя в базе
 	const userRes = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
 	if (userRes.rows.length === 0) {
-	  return res.status(404).json({ success: false, message: 'Пользователь с таким email не найден' });
+	  return res.status(404).json({ success: false, message: 'Пользователь не найден' });
 	}
 
-	// Генерируем новый случайный пароль (8 символов)
-	const newPassword = Math.random().toString(36).slice(-8);
-	
-	// Шифруем его и сохраняем в базу вместо старого
-	const salt = await bcrypt.genSalt(10);
-	const hashedPassword = await bcrypt.hash(newPassword, salt);
-	await pool.query('UPDATE users SET password_hash = $1 WHERE email = $2', [hashedPassword, email]);
+	const user = userRes.rows[0];
 
-	// Отправляем письмо
+	// Генерируем временный ключ для ссылки (действует 15 минут)
+	const resetToken = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '15m' });
+
+	// Формируем ссылку, ведущую обратно на наш сервер
+	const resetLink = `https://api.f-kit.ru/auth/reset-confirm?token=${resetToken}`;
+
+	// Отправляем письмо с HTML-разметкой и кнопкой
 	await transporter.sendMail({
-	  from: '"Команда F-Kit" <support@f-kit.ru>', // 🔴 ДОЛЖНО СОВПАДАТЬ С user В НАСТРОЙКАХ ВЫШЕ
+	  from: '"Команда F-Kit" <support@f-kit.ru>',
 	  to: email,
-	  subject: 'Восстановление пароля в F-Kit HUB',
-	  text: `Здравствуйте!\n\nВаш новый пароль для входа: ${newPassword}\n\nПожалуйста, используйте его для авторизации. После входа вы сможете изменить его (в будущих обновлениях).`
+	  subject: 'Подтверждение сброса пароля в F-Kit',
+	  html: `
+		<div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px;">
+		  <h3>Здравствуйте!</h3>
+		  <p>Мы получили запрос на сброс пароля для вашей учетной записи.</p>
+		  <p>Если это были вы, нажмите на ссылку ниже, чтобы сгенерировать новый пароль:</p>
+		  <a href="${resetLink}" style="display: inline-block; padding: 12px 24px; background-color: #54D87A; color: #000; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0;">Подтвердить сброс пароля</a>
+		  <p style="color: #666; font-size: 12px;">Ссылка действительна 15 минут.</p>
+		  <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+		  <p style="color: #999; font-size: 12px;">Если вы не запрашивали сброс, просто проигнорируйте это письмо. Ваш текущий пароль в безопасности.</p>
+		</div>
+	  `
 	});
 
-	res.json({ success: true, message: 'Новый пароль отправлен на вашу почту' });
+	res.json({ success: true, message: 'Ссылка для подтверждения отправлена на почту' });
   } catch (error) {
 	console.error('Forgot Password Error:', error);
 	res.status(500).json({ success: false, message: 'Ошибка при отправке письма' });
   }
 }
 
-module.exports = { register, login, getMe, getAdminData, updateSubscription, closeUserSessions, deleteUser, forgotPassword };
+// === 2. НОВАЯ ФУНКЦИЯ ПОДТВЕРЖДЕНИЯ (когда кликнули по ссылке в письме) ===
+async function confirmPasswordReset(req, res) {
+  try {
+	const { token } = req.query; // Получаем токен из ссылки
+	if (!token) return res.status(400).send('Токен не предоставлен');
+
+	// Расшифровываем токен. Если прошло больше 15 минут, будет ошибка
+	const decoded = jwt.verify(token, process.env.JWT_SECRET);
+	const userId = decoded.id;
+
+	// Генерируем новый пароль
+	const newPassword = Math.random().toString(36).slice(-8);
+	const salt = await bcrypt.genSalt(10);
+	const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+	// Сохраняем в базу
+	await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedPassword, userId]);
+
+	// Рисуем пользователю красивую страницу прямо из сервера
+	const htmlResponse = `
+	  <!DOCTYPE html>
+	  <html lang="ru">
+	  <head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Пароль изменен</title>
+	  </head>
+	  <body style="font-family: Arial, sans-serif; background: #090e1a; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
+		<div style="background: rgba(255,255,255,0.05); padding: 40px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); text-align: center; max-width: 400px; width: 90%;">
+		  <h2 style="color: #54D87A; margin-top: 0;">Пароль успешно сброшен!</h2>
+		  <p>Ваш новый пароль для входа:</p>
+		  <div style="font-size: 28px; font-weight: bold; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin: 20px 0; letter-spacing: 2px;">
+			${newPassword}
+		  </div>
+		  <p style="font-size: 13px; color: rgba(255,255,255,0.6); margin-bottom: 30px;">Обязательно скопируйте или сохраните его прямо сейчас.</p>
+		  <a href="https://f-kit.ru/login" style="display: inline-block; background: #FFF993; color: #000; padding: 14px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; transition: opacity 0.2s;">Вернуться к входу</a>
+		</div>
+	  </body>
+	  </html>
+	`;
+	
+	// Отправляем готовую HTML страницу
+	res.send(htmlResponse);
+
+  } catch (error) {
+	console.error('Confirm Reset Error:', error);
+	// Если токен просрочен или неверный:
+	res.status(400).send(`
+	  <body style="background: #090e1a; color: #fff; font-family: Arial, sans-serif; text-align:center; padding-top: 100px;">
+		<h2 style="color: #ff5c5c;">Ссылка недействительна или устарела</h2>
+		<p>Срок действия ссылки составляет 15 минут. Пожалуйста, вернитесь на сайт и запросите сброс пароля еще раз.</p>
+	  </body>
+	`);
+  }
+}
+
+module.exports = { register, login, getMe, getAdminData, updateSubscription, closeUserSessions, deleteUser, forgotPassword, confirmPasswordReset };

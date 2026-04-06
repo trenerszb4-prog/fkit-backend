@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 
 // НОВОЕ: Мы добавили getAdminData и updateSubscription в список загружаемых функций
-const { register, login, getMe, getAdminData, updateSubscription, closeUserSessions, deleteUser, forgotPassword } = require('../controllers/authController');
+const { register, login, getMe, getAdminData, updateSubscription, closeUserSessions, deleteUser, forgotPassword, confirmPasswordReset } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
 
 router.post('/register', register);
@@ -16,5 +16,6 @@ router.post('/admin/subscription', protect, updateSubscription);
 router.post('/admin/user/close-sessions', protect, closeUserSessions);
 router.post('/admin/user/delete', protect, deleteUser);
 router.post('/forgot-password', forgotPassword);
+router.get('/reset-confirm', confirmPasswordReset);
 
 module.exports = router;
