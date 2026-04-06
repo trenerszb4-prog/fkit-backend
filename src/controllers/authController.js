@@ -2,6 +2,18 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 
+// === 1. НАСТРОЙКА ПОЧТЫ REG.RU ===
+const transporter = nodemailer.createTransport({
+  host: 'mail.hosting.reg.ru', // Стандартный сервер REG.RU
+  port: 465,                   // Безопасный порт
+  secure: true,                
+  auth: {
+	user: 'info@f-kit.ru',     // 🔴 ВПИШИ СЮДА СОЗДАННЫЙ ЯЩИК ЦЕЛИКОМ
+	pass: 'ТвойПарольОтПочты'  // 🔴 ВПИШИ ПАРОЛЬ, КОТОРЫЙ ТЫ ПРИДУМАЛ В ШАГЕ 1
+  }
+});
+
+// Генерация токена
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
 };
@@ -194,4 +206,42 @@ async function deleteUser(req, res) {
   }
 }
 
-module.exports = { register, login, getMe, getAdminData, updateSubscription, closeUserSessions, deleteUser };
+// === 2. НОВАЯ ФУНКЦИЯ ВОССТАНОВЛЕНИЯ ПАРОЛЯ ===
+async function forgotPassword(req, res) {
+  try {
+	const { email } = req.body;
+
+	if (!email) {
+	  return res.status(400).json({ success: false, message: 'Укажите email' });
+	}
+
+	// Ищем пользователя в базе
+	const userRes = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+	if (userRes.rows.length === 0) {
+	  return res.status(404).json({ success: false, message: 'Пользователь с таким email не найден' });
+	}
+
+	// Генерируем новый случайный пароль (8 символов)
+	const newPassword = Math.random().toString(36).slice(-8);
+	
+	// Шифруем его и сохраняем в базу вместо старого
+	const salt = await bcrypt.genSalt(10);
+	const hashedPassword = await bcrypt.hash(newPassword, salt);
+	await pool.query('UPDATE users SET password_hash = $1 WHERE email = $2', [hashedPassword, email]);
+
+	// Отправляем письмо
+	await transporter.sendMail({
+	  from: '"Команда F-Kit" <info@f-kit.ru>', // 🔴 ДОЛЖНО СОВПАДАТЬ С user В НАСТРОЙКАХ ВЫШЕ
+	  to: email,
+	  subject: 'Восстановление пароля в F-Kit HUB',
+	  text: `Здравствуйте!\n\nВаш новый пароль для входа: ${newPassword}\n\nПожалуйста, используйте его для авторизации. После входа вы сможете изменить его (в будущих обновлениях).`
+	});
+
+	res.json({ success: true, message: 'Новый пароль отправлен на вашу почту' });
+  } catch (error) {
+	console.error('Forgot Password Error:', error);
+	res.status(500).json({ success: false, message: 'Ошибка при отправке письма' });
+  }
+}
+
+module.exports = { register, login, getMe, getAdminData, updateSubscription, closeUserSessions, deleteUser, forgotPassword };
