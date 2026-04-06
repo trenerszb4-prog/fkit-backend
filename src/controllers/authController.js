@@ -8,8 +8,8 @@ const transporter = nodemailer.createTransport({
   port: 465,                   // Безопасный порт
   secure: true,                
   auth: {
-	user: 'info@f-kit.ru',     // 🔴 ВПИШИ СЮДА СОЗДАННЫЙ ЯЩИК ЦЕЛИКОМ
-	pass: 'ТвойПарольОтПочты'  // 🔴 ВПИШИ ПАРОЛЬ, КОТОРЫЙ ТЫ ПРИДУМАЛ В ШАГЕ 1
+	user: 'support@f-kit.ru',     // 🔴 ВПИШИ СЮДА СОЗДАННЫЙ ЯЩИК ЦЕЛИКОМ
+	pass: 'zN3iN5vJ0coS8wB4'  // 🔴 ВПИШИ ПАРОЛЬ, КОТОРЫЙ ТЫ ПРИДУМАЛ В ШАГЕ 1
   }
 });
 
