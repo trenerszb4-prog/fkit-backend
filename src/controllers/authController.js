@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
+const nodemailer = require('nodemailer');
 
 // === 1. НАСТРОЙКА ПОЧТЫ REG.RU ===
 const transporter = nodemailer.createTransport({
