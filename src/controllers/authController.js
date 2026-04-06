@@ -207,7 +207,7 @@ async function deleteUser(req, res) {
   }
 }
 
-// === 1. ОБНОВЛЕННАЯ ФУНКЦИЯ ЗАПРОСА СБРОСА ===
+// === 1. ФУНКЦИЯ ЗАПРОСА СБРОСА (Отправляет ссылку) ===
 async function forgotPassword(req, res) {
   try {
 	const { email } = req.body;
@@ -219,27 +219,27 @@ async function forgotPassword(req, res) {
 	}
 
 	const user = userRes.rows[0];
-
-	// Генерируем временный ключ для ссылки (действует 15 минут)
 	const resetToken = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '15m' });
-
-	// Формируем ссылку, ведущую обратно на наш сервер
 	const resetLink = `https://api.f-kit.ru/auth/reset-confirm?token=${resetToken}`;
 
-	// Отправляем письмо с HTML-разметкой и кнопкой
+	// ПЕРВОЕ ПИСЬМО: Фирменный сине-желтый стиль
 	await transporter.sendMail({
 	  from: '"Команда F-Kit" <support@f-kit.ru>',
 	  to: email,
 	  subject: 'Подтверждение сброса пароля в F-Kit',
 	  html: `
-		<div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px;">
-		  <h3>Здравствуйте!</h3>
-		  <p>Мы получили запрос на сброс пароля для вашей учетной записи.</p>
-		  <p>Если это были вы, нажмите на ссылку ниже, чтобы сгенерировать новый пароль:</p>
-		  <a href="${resetLink}" style="display: inline-block; padding: 12px 24px; background-color: #54D87A; color: #000; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0;">Подтвердить сброс пароля</a>
-		  <p style="color: #666; font-size: 12px;">Ссылка действительна 15 минут.</p>
-		  <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-		  <p style="color: #999; font-size: 12px;">Если вы не запрашивали сброс, просто проигнорируйте это письмо. Ваш текущий пароль в безопасности.</p>
+		<div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 30px; background-color: #090e1a; color: #ffffff; border-radius: 12px;">
+		  <h2 style="color: #FFF993; margin-top: 0;">Сброс пароля</h2>
+		  <p style="font-size: 15px; line-height: 1.6; color: #e0e0e0;">Мы получили запрос на сброс пароля для вашей учетной записи в F-Kit HUB.</p>
+		  <p style="font-size: 15px; line-height: 1.6; color: #e0e0e0;">Если это были вы, нажмите на кнопку ниже для подтверждения:</p>
+		  
+		  <div style="text-align: center; margin: 30px 0;">
+			<a href="${resetLink}" style="display: inline-block; padding: 14px 30px; background-color: #FFF993; color: #000000; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px;">Подтвердить сброс</a>
+		  </div>
+		  
+		  <p style="color: #888; font-size: 12px; text-align: center;">Ссылка действительна 15 минут.</p>
+		  <hr style="border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 20px 0;">
+		  <p style="color: #666; font-size: 12px; text-align: center;">Если вы не запрашивали сброс, просто проигнорируйте это письмо.</p>
 		</div>
 	  `
 	});
@@ -251,25 +251,52 @@ async function forgotPassword(req, res) {
   }
 }
 
-// === 2. НОВАЯ ФУНКЦИЯ ПОДТВЕРЖДЕНИЯ (когда кликнули по ссылке в письме) ===
+// === 2. ФУНКЦИЯ ПОДТВЕРЖДЕНИЯ (Меняет пароль и отправляет второе письмо) ===
 async function confirmPasswordReset(req, res) {
   try {
-	const { token } = req.query; // Получаем токен из ссылки
+	const { token } = req.query;
 	if (!token) return res.status(400).send('Токен не предоставлен');
 
-	// Расшифровываем токен. Если прошло больше 15 минут, будет ошибка
 	const decoded = jwt.verify(token, process.env.JWT_SECRET);
 	const userId = decoded.id;
 
-	// Генерируем новый пароль
+	// 1. Ищем пользователя, чтобы узнать его email
+	const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [userId]);
+	if (userRes.rows.length === 0) return res.status(404).send('Пользователь не найден');
+	const userEmail = userRes.rows[0].email;
+
+	// 2. Генерируем новый пароль
 	const newPassword = Math.random().toString(36).slice(-8);
 	const salt = await bcrypt.genSalt(10);
 	const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-	// Сохраняем в базу
+	// 3. Сохраняем в базу
 	await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedPassword, userId]);
 
-	// Рисуем пользователю красивую страницу прямо из сервера
+	// 4. ВТОРОЕ ПИСЬМО: Отправляем сам пароль в фирменном стиле
+	await transporter.sendMail({
+	  from: '"Команда F-Kit" <support@f-kit.ru>',
+	  to: userEmail,
+	  subject: 'Ваш новый пароль от F-Kit HUB',
+	  html: `
+		<div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 30px; background-color: #090e1a; color: #ffffff; border-radius: 12px;">
+		  <h2 style="color: #FFF993; margin-top: 0;">Пароль успешно изменен!</h2>
+		  <p style="font-size: 15px; color: #e0e0e0;">Ваш новый пароль для входа в панель ведущего:</p>
+		  
+		  <div style="text-align: center; margin: 25px 0;">
+			<span style="display: inline-block; font-size: 24px; font-weight: bold; background: rgba(255, 249, 147, 0.1); color: #FFF993; padding: 15px 30px; border-radius: 8px; border: 1px dashed #FFF993; letter-spacing: 2px;">
+			  ${newPassword}
+			</span>
+		  </div>
+		  
+		  <div style="text-align: center; margin-top: 30px;">
+			<a href="https://f-kit.ru/login" style="display: inline-block; padding: 14px 30px; background-color: #FFF993; color: #000000; text-decoration: none; border-radius: 8px; font-weight: bold;">Войти в аккаунт</a>
+		  </div>
+		</div>
+	  `
+	});
+
+	// 5. ЭКРАН УСПЕХА: Показываем в браузере (БЕЗ ПАРОЛЯ)
 	const htmlResponse = `
 	  <!DOCTYPE html>
 	  <html lang="ru">
@@ -278,26 +305,20 @@ async function confirmPasswordReset(req, res) {
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<title>Пароль изменен</title>
 	  </head>
-	  <body style="font-family: Arial, sans-serif; background: #090e1a; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
-		<div style="background: rgba(255,255,255,0.05); padding: 40px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); text-align: center; max-width: 400px; width: 90%;">
-		  <h2 style="color: #54D87A; margin-top: 0;">Пароль успешно сброшен!</h2>
-		  <p>Ваш новый пароль для входа:</p>
-		  <div style="font-size: 28px; font-weight: bold; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin: 20px 0; letter-spacing: 2px;">
-			${newPassword}
-		  </div>
-		  <p style="font-size: 13px; color: rgba(255,255,255,0.6); margin-bottom: 30px;">Обязательно скопируйте или сохраните его прямо сейчас.</p>
-		  <a href="https://f-kit.ru/login" style="display: inline-block; background: #FFF993; color: #000; padding: 14px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; transition: opacity 0.2s;">Вернуться к входу</a>
+	  <body style="font-family: 'TildaSans', Arial, sans-serif; background: #090e1a; background-image: radial-gradient(circle at top center, #162854 0%, #05080f 80%); color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
+		<div style="background: rgba(255,255,255,0.05); padding: 40px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); text-align: center; max-width: 420px; width: 90%; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);">
+		  <h2 style="color: #FFF993; margin-top: 0; font-size: 26px;">Пароль успешно сброшен!</h2>
+		  <p style="font-size: 16px; line-height: 1.6; color: rgba(255,255,255,0.8); margin-bottom: 30px;">Новый пароль только что был отправлен на вашу электронную почту.</p>
+		  <a href="https://f-kit.ru/login" style="display: inline-block; background: #FFF993; color: #000; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; transition: all 0.2s ease;">Вернуться к входу</a>
 		</div>
 	  </body>
 	  </html>
 	`;
 	
-	// Отправляем готовую HTML страницу
 	res.send(htmlResponse);
 
   } catch (error) {
 	console.error('Confirm Reset Error:', error);
-	// Если токен просрочен или неверный:
 	res.status(400).send(`
 	  <body style="background: #090e1a; color: #fff; font-family: Arial, sans-serif; text-align:center; padding-top: 100px;">
 		<h2 style="color: #ff5c5c;">Ссылка недействительна или устарела</h2>
