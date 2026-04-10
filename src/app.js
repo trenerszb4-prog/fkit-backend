@@ -9,6 +9,7 @@ const sessionRoutes = require('./routes/sessionRoutes');
 const playerRoutes = require('./routes/playerRoutes');
 const screenRoutes = require('./routes/screenRoutes');
 const deckRoutes = require('./routes/deckRoutes');
+const wordcloudRoutes = require('./routes/wordcloudRoutes'); // 🟢 Подключаем Облако слов
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use('/sessions', sessionRoutes);
 app.use('/player', playerRoutes);
 app.use('/screen', screenRoutes);
 app.use('/decks', deckRoutes);
+app.use('/wordcloud', wordcloudRoutes); // 🟢 Монтируем роутер Облака слов
 
 // ВАЖНО: временно убираем test.routes
 // app.use('/test', testRoutes);
