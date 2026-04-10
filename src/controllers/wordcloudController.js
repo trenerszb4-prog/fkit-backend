@@ -1,13 +1,13 @@
 const pool = require('../config/db');
-
-// 🟢 ВОТ ЭТА СТРОЧКА БЫЛА ПРОПУЩЕНА:
-const { broadcastToSession } = require('../realtime/ws'); 
+// 🟢 ИСПРАВЛЕНИЕ: Добавили импорт функции веб-сокетов
+const { broadcastToSession } = require('../realtime/ws');
 
 // ================= ПОЛУЧИТЬ СЛОВА =================
 async function getWords(req, res) {
   try {
 	const { sessionId } = req.params;
 	
+	// Группируем одинаковые слова и считаем их количество (вес)
 	const result = await pool.query(
 	  `SELECT word, COUNT(*)::int as weight
 	   FROM wordcloud_words
@@ -39,13 +39,15 @@ async function addWord(req, res) {
 
 	const cleanWord = word.trim().toLowerCase();
 
+	// Сохраняем слово в базу
 	await pool.query(
 	  `INSERT INTO wordcloud_words (session_id, participant_id, word, created_at)
 	   VALUES ($1, $2, $3, NOW())`,
 	  [sessionId, participantId, cleanWord]
 	);
 
-	// Теперь эта функция определена и сервер не упадет 🚀
+	// 🟢 Мгновенно рассылаем всем сигнал через WebSocket
+	// Теперь функция импортирована и ошибка не появится
 	if (typeof broadcastToSession === 'function') {
 	  broadcastToSession(sessionId, { 
 		type: 'word_added', 
@@ -66,6 +68,7 @@ async function clearWords(req, res) {
 	const { sessionId } = req.params;
 	const userId = req.user.id; 
 
+	// Проверяем, что сессия принадлежит этому фасилитатору
 	const sessionCheck = await pool.query(
 	  `SELECT id FROM sessions WHERE id = $1 AND user_id = $2 LIMIT 1`,
 	  [sessionId, userId]
@@ -75,11 +78,13 @@ async function clearWords(req, res) {
 	  return res.status(403).json({ success: false, message: 'Нет прав на очистку этой сессии' });
 	}
 
+	// Удаляем все слова сессии
 	await pool.query(
 	  `DELETE FROM wordcloud_words WHERE session_id = $1`,
 	  [sessionId]
 	);
 
+	// Рассылаем всем сигнал на очистку
 	if (typeof broadcastToSession === 'function') {
 	  broadcastToSession(sessionId, { type: 'cloud_cleared' });
 	}
