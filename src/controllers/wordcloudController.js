@@ -1,13 +1,9 @@
 const pool = require('../config/db');
-// 🟢 ИСПРАВЛЕНИЕ: Добавили импорт функции веб-сокетов
-const { broadcastToSession } = require('../realtime/ws');
+const { broadcastToSession } = require('../realtime/ws'); 
 
-// ================= ПОЛУЧИТЬ СЛОВА =================
 async function getWords(req, res) {
   try {
 	const { sessionId } = req.params;
-	
-	// Группируем одинаковые слова и считаем их количество (вес)
 	const result = await pool.query(
 	  `SELECT word, COUNT(*)::int as weight
 	   FROM wordcloud_words
@@ -17,17 +13,13 @@ async function getWords(req, res) {
 	  [sessionId]
 	);
 
-	return res.json({
-	  success: true,
-	  words: result.rows
-	});
+	return res.json({ success: true, words: result.rows });
   } catch (error) {
 	console.error('getWords error:', error);
 	return res.status(500).json({ success: false, message: 'Ошибка получения слов' });
   }
 }
 
-// ================= ДОБАВИТЬ СЛОВО =================
 async function addWord(req, res) {
   try {
 	const { sessionId } = req.params;
@@ -39,20 +31,14 @@ async function addWord(req, res) {
 
 	const cleanWord = word.trim().toLowerCase();
 
-	// Сохраняем слово в базу
 	await pool.query(
 	  `INSERT INTO wordcloud_words (session_id, participant_id, word, created_at)
 	   VALUES ($1, $2, $3, NOW())`,
 	  [sessionId, participantId, cleanWord]
 	);
 
-	// 🟢 Мгновенно рассылаем всем сигнал через WebSocket
-	// Теперь функция импортирована и ошибка не появится
 	if (typeof broadcastToSession === 'function') {
-	  broadcastToSession(sessionId, { 
-		type: 'word_added', 
-		word: cleanWord 
-	  });
+	  broadcastToSession(sessionId, { type: 'word_added', word: cleanWord });
 	}
 
 	return res.json({ success: true, message: 'Слово добавлено' });
@@ -62,13 +48,11 @@ async function addWord(req, res) {
   }
 }
 
-// ================= ОЧИСТИТЬ ОБЛАКО =================
 async function clearWords(req, res) {
   try {
 	const { sessionId } = req.params;
 	const userId = req.user.id; 
 
-	// Проверяем, что сессия принадлежит этому фасилитатору
 	const sessionCheck = await pool.query(
 	  `SELECT id FROM sessions WHERE id = $1 AND user_id = $2 LIMIT 1`,
 	  [sessionId, userId]
@@ -78,13 +62,8 @@ async function clearWords(req, res) {
 	  return res.status(403).json({ success: false, message: 'Нет прав на очистку этой сессии' });
 	}
 
-	// Удаляем все слова сессии
-	await pool.query(
-	  `DELETE FROM wordcloud_words WHERE session_id = $1`,
-	  [sessionId]
-	);
+	await pool.query(`DELETE FROM wordcloud_words WHERE session_id = $1`, [sessionId]);
 
-	// Рассылаем всем сигнал на очистку
 	if (typeof broadcastToSession === 'function') {
 	  broadcastToSession(sessionId, { type: 'cloud_cleared' });
 	}
@@ -96,6 +75,7 @@ async function clearWords(req, res) {
   }
 }
 
+// ВОТ ЭТОТ БЛОК КРИТИЧЕСКИ ВАЖЕН:
 module.exports = {
   getWords,
   addWord,
