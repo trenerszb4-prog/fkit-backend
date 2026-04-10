@@ -131,7 +131,8 @@ async function createSession(req, res) {
 	const pinCode = await generateUniquePinCode();
 	const sessionId = `s_${Date.now()}`;
 
-	const sessionSettings = {
+const sessionSettings = {
+	  // Настройки карт
 	  deckId: deckId !== undefined ? deckId : 'deck1',
 	  cardMode: cardMode !== undefined ? cardMode : 'full_deck',
 	  randomCardsCount: randomCardsCount !== undefined ? Number(randomCardsCount) : 0,
@@ -140,7 +141,15 @@ async function createSession(req, res) {
 	  timerMinutes: timerMinutes !== undefined ? Number(timerMinutes) : 3,
 	  replaceCardEnabled: replaceCardEnabled !== undefined ? Boolean(replaceCardEnabled) : false,
 	  questionsEnabled: questionsEnabled !== undefined ? Boolean(questionsEnabled) : false,
-	  questions: Array.isArray(questions) ? questions : []
+	  questions: Array.isArray(questions) ? questions : [],
+	  
+	  // Настройки Облака слов
+	  palette: req.body.settings?.palette || 'fkit',
+	  animationEnabled: req.body.settings?.animationEnabled !== undefined ? Boolean(req.body.settings.animationEnabled) : true,
+	  saveResult: req.body.settings?.saveResult !== undefined ? Boolean(req.body.settings.saveResult) : true,
+	  bgWordsEnabled: req.body.settings?.bgWordsEnabled !== undefined ? Boolean(req.body.settings.bgWordsEnabled) : false,
+	  duplicateWordsEnabled: req.body.settings?.duplicateWordsEnabled !== undefined ? Boolean(req.body.settings.duplicateWordsEnabled) : false,
+	  duplicateCount: req.body.settings?.duplicateCount !== undefined ? Number(req.body.settings.duplicateCount) : 3
 	};
 
 	const result = await pool.query(
@@ -257,10 +266,11 @@ const {
 	  questions
 	} = req.body;
 
-	const nextSettings = {
+const nextSettings = {
 	  ...(session.settings || {})
 	};
-
+	
+	// Настройки карт (из корня body)
 	if (deckId !== undefined) nextSettings.deckId = deckId;
 	if (cardMode !== undefined) nextSettings.cardMode = cardMode;
 	if (randomCardsCount !== undefined) nextSettings.randomCardsCount = randomCardsCount;
@@ -270,6 +280,16 @@ const {
 	if (replaceCardEnabled !== undefined) nextSettings.replaceCardEnabled = Boolean(replaceCardEnabled);
 	if (questionsEnabled !== undefined) nextSettings.questionsEnabled = Boolean(questionsEnabled);
 	if (questions !== undefined) nextSettings.questions = questions;
+	
+	// Настройки Облака (из объекта settings в body)
+	if (req.body.settings) {
+	  if (req.body.settings.palette !== undefined) nextSettings.palette = req.body.settings.palette;
+	  if (req.body.settings.animationEnabled !== undefined) nextSettings.animationEnabled = Boolean(req.body.settings.animationEnabled);
+	  if (req.body.settings.saveResult !== undefined) nextSettings.saveResult = Boolean(req.body.settings.saveResult);
+	  if (req.body.settings.bgWordsEnabled !== undefined) nextSettings.bgWordsEnabled = Boolean(req.body.settings.bgWordsEnabled);
+	  if (req.body.settings.duplicateWordsEnabled !== undefined) nextSettings.duplicateWordsEnabled = Boolean(req.body.settings.duplicateWordsEnabled);
+	  if (req.body.settings.duplicateCount !== undefined) nextSettings.duplicateCount = Number(req.body.settings.duplicateCount);
+	}
 
 	const result = await pool.query(
 	  `
