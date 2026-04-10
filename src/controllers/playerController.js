@@ -1164,6 +1164,7 @@ function formatSession(session) {
 	title: session.title,
 	pinCode: session.pin_code,
 	status: session.status,
+	serviceType: session.service_type,
 	settings: session.settings || {},
 	createdAt: session.created_at,
 	updatedAt: session.updated_at,
