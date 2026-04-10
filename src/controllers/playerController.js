@@ -90,10 +90,11 @@ async function makeUniqueDisplayName(sessionId, rawName) {
 async function getLiveSessionByPin(pinCode) {
   const result = await pool.query(
 	`
-	SELECT *
-	FROM sessions
-	WHERE pin_code = $1
-	  AND status = 'live'
+	SELECT s.*, srv.code as service_type
+	FROM sessions s
+	LEFT JOIN services srv ON s.service_id = srv.id
+	WHERE s.pin_code = $1
+	  AND s.status = 'live'
 	LIMIT 1
 	`,
 	[pinCode]
@@ -105,9 +106,10 @@ async function getLiveSessionByPin(pinCode) {
 async function getSessionById(sessionId) {
   const result = await pool.query(
 	`
-	SELECT *
-	FROM sessions
-	WHERE id = $1
+	SELECT s.*, srv.code as service_type
+	FROM sessions s
+	LEFT JOIN services srv ON s.service_id = srv.id
+	WHERE s.id = $1
 	LIMIT 1
 	`,
 	[sessionId]
