@@ -42,7 +42,6 @@ async function register(req, res) {
 	const expiresAt = new Date();
 	expiresAt.setDate(expiresAt.getDate() + 60);
 
-	// 🟢 ДОБАВЛЕНО: NOW() для subscription_updated_at при регистрации
 	const newUser = await pool.query(
 	  'INSERT INTO users (email, password_hash, subscription_type, subscription_expires_at, subscription_updated_at) VALUES ($1, $2, $3, $4, NOW()) RETURNING id, email',
 	  [email, hashedPassword, 'ALLIN', expiresAt]
@@ -111,16 +110,19 @@ async function getAdminData(req, res) {
 	  return res.status(403).json({ success: false, message: 'Доступ запрещен. Вы не администратор.' });
 	}
 
-	// 🟢 ДОБАВЛЕНО: Вытаскиваем created_at и subscription_updated_at
 	const usersResult = await pool.query('SELECT id, email, subscription_type, subscription_expires_at, created_at, subscription_updated_at FROM users ORDER BY created_at DESC');
 	const totalUsers = usersResult.rowCount;
 	
 	const liveSessionsResult = await pool.query("SELECT COUNT(*) FROM sessions WHERE status = 'live'");
 	const liveSessions = liveSessionsResult.rows[0].count;
 
+	// 🟢 ДОБАВЛЕНО: Считаем запланированные сессии
+	const scheduledSessionsResult = await pool.query("SELECT COUNT(*) FROM sessions WHERE status = 'scheduled'");
+	const scheduledSessions = scheduledSessionsResult.rows[0].count;
+
 	res.json({
 	  success: true,
-	  stats: { totalUsers, liveSessions },
+	  stats: { totalUsers, liveSessions, scheduledSessions }, // 🟢 Передаем на фронтенд
 	  users: usersResult.rows
 	});
   } catch (error) {
@@ -143,7 +145,6 @@ async function updateSubscription(req, res) {
 	const newDate = new Date();
 	newDate.setDate(newDate.getDate() + parseInt(days));
 
-	// 🟢 ДОБАВЛЕНО: Обновляем subscription_updated_at текущим временем
 	await pool.query(
 	  'UPDATE users SET subscription_expires_at = $1, subscription_updated_at = NOW() WHERE id = $2',
 	  [newDate, targetUserId]
