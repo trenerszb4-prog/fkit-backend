@@ -29,6 +29,15 @@ async function addWord(req, res) {
 	  return res.status(400).json({ success: false, message: 'Слово не может быть пустым' });
 	}
 
+	// 🟢 ЖЕЛЕЗОБЕТОННАЯ ЗАЩИТА: Сервер проверяет, не остановлен ли сбор
+	const sessionRes = await pool.query(`SELECT settings FROM sessions WHERE id = $1`, [sessionId]);
+	if (sessionRes.rows.length > 0) {
+	  const settings = sessionRes.rows[0].settings || {};
+	  if (settings.isPaused) {
+		return res.status(403).json({ success: false, message: 'Сбор слов остановлен ведущим' });
+	  }
+	}
+
 	const cleanWord = word.trim().toLowerCase();
 
 	await pool.query(
@@ -75,13 +84,11 @@ async function clearWords(req, res) {
   }
 }
 
-// 🟢 НОВАЯ ФУНКЦИЯ УДАЛЕНИЯ КОНКРЕТНОГО СЛОВА
 async function deleteWord(req, res) {
   try {
 	const { sessionId, word } = req.params;
 	const userId = req.user.id; 
 
-	// Проверяем, принадлежит ли сессия пользователю (фасилитатору)
 	const sessionCheck = await pool.query(
 	  `SELECT id FROM sessions WHERE id = $1 AND user_id = $2 LIMIT 1`,
 	  [sessionId, userId]
@@ -98,7 +105,6 @@ async function deleteWord(req, res) {
 	  [sessionId, cleanWord]
 	);
 
-	// Рассылаем сигнал всем экранам для мгновенного обновления облака
 	if (typeof broadcastToSession === 'function') {
 	  broadcastToSession(sessionId, { type: 'cloud_cleared' }); 
 	}
@@ -110,9 +116,44 @@ async function deleteWord(req, res) {
   }
 }
 
+// 🟢 НОВАЯ ФУНКЦИЯ ДЛЯ УПРАВЛЕНИЯ ПАУЗОЙ
+async function togglePause(req, res) {
+  try {
+	const { sessionId } = req.params;
+	const { isPaused } = req.body;
+	const userId = req.user.id;
+
+	const sessionCheck = await pool.query(
+	  `SELECT id FROM sessions WHERE id = $1 AND user_id = $2 LIMIT 1`,
+	  [sessionId, userId]
+	);
+
+	if (sessionCheck.rows.length === 0) {
+	  return res.status(403).json({ success: false, message: 'Нет прав на управление сессией' });
+	}
+
+	// Сохраняем статус паузы прямо в настройки сессии
+	await pool.query(
+	  `UPDATE sessions SET settings = coalesce(settings, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+	  [sessionId, JSON.stringify({ isPaused })]
+	);
+
+	if (typeof broadcastToSession === 'function') {
+	  // Рассылаем сигнал всем пультам, чтобы они заблокировали поле ввода
+	  broadcastToSession(sessionId, { type: 'session_updated' });
+	}
+
+	return res.json({ success: true, message: isPaused ? 'Пауза включена' : 'Сбор возобновлен' });
+  } catch (error) {
+	console.error('togglePause error:', error);
+	return res.status(500).json({ success: false, message: 'Ошибка изменения статуса' });
+  }
+}
+
 module.exports = {
   getWords,
   addWord,
   clearWords,
-  deleteWord
+  deleteWord,
+  togglePause
 };
