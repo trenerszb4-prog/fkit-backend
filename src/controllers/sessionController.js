@@ -7,6 +7,23 @@ const { broadcastToSession } = require('../realtime/ws');
 const OPEN_SESSION_STATUSES = ['scheduled', 'live'];
 const MAX_OPEN_SESSIONS_PER_USER = 3;
 
+// 🟢 ФУНКЦИЯ-СТРАЖ ДЛЯ БЭКЕНДА
+function isPremiumAccessDenied(user, serviceType) {
+  const FREE_SERVICES = ['cloud', 'timer', 'radio'];
+  // Бесплатные инструменты пускаем всегда
+  if (FREE_SERVICES.includes(serviceType)) return false; 
+  // Суперадмина пускаем всегда
+  if (user.email === 'witamin@ngs.ru') return false; 
+
+  // Если подписки вообще нет - запрет
+  if (!user.subscription_expires_at) return true; 
+  
+  // Проверяем, не истекла ли дата
+  const expiresAt = new Date(user.subscription_expires_at);
+  const now = new Date();
+  return expiresAt < now;
+}
+
 function formatSession(row) {
   if (!row) return null;
 
@@ -57,21 +74,21 @@ async function ensureOpenSessionsLimit(userId, excludeSessionId = null) {
 }
 
 // ================= GET ALL =================
-
+// Выдача списка в Хаб - не блокируем, чтобы отрисовать серые карточки
 async function getSessions(req, res) {
   try {
-const result = await pool.query(
-	`
-	SELECT
-	  s.*,
-	  sv.code AS service_type
-	FROM sessions s
-	LEFT JOIN services sv ON sv.id = s.service_id
-	WHERE s.user_id = $1
-	ORDER BY s.created_at DESC
-	`,
-	[req.user.id]
-  );
+	const result = await pool.query(
+		`
+		SELECT
+		  s.*,
+		  sv.code AS service_type
+		FROM sessions s
+		LEFT JOIN services sv ON sv.id = s.service_id
+		WHERE s.user_id = $1
+		ORDER BY s.created_at DESC
+		`,
+		[req.user.id]
+	  );
 
 	return res.json({
 	  success: true,
@@ -104,6 +121,14 @@ async function createSession(req, res) {
 	  questions
 	} = req.body;
 
+	// 🟢 ПРОВЕРКА ПОДПИСКИ ПРИ СОЗДАНИИ
+	if (isPremiumAccessDenied(req.user, serviceType)) {
+	  return res.status(403).json({
+		success: false,
+		message: 'Подписка истекла. Доступ к инструменту закрыт.'
+	  });
+	}
+
 	if (!title) {
 	  return res.status(400).json({
 		success: false,
@@ -131,8 +156,7 @@ async function createSession(req, res) {
 	const pinCode = await generateUniquePinCode();
 	const sessionId = `s_${Date.now()}`;
 
-const sessionSettings = {
-	  // Настройки карт
+	const sessionSettings = {
 	  deckId: deckId !== undefined ? deckId : 'deck1',
 	  cardMode: cardMode !== undefined ? cardMode : 'full_deck',
 	  randomCardsCount: randomCardsCount !== undefined ? Number(randomCardsCount) : 0,
@@ -143,7 +167,6 @@ const sessionSettings = {
 	  questionsEnabled: questionsEnabled !== undefined ? Boolean(questionsEnabled) : false,
 	  questions: Array.isArray(questions) ? questions : [],
 	  
-	  // Настройки Облака слов
 	  palette: req.body.settings?.palette || 'fkit',
 	  question: req.body.settings?.question || '',
 	  animationEnabled: req.body.settings?.animationEnabled !== undefined ? Boolean(req.body.settings.animationEnabled) : true,
@@ -156,27 +179,12 @@ const sessionSettings = {
 	const result = await pool.query(
 	  `
 	  INSERT INTO sessions (
-		id,
-		user_id,
-		service_id,
-		title,
-		pin_code,
-		status,
-		settings,
-		created_at,
-		updated_at
+		id, user_id, service_id, title, pin_code, status, settings, created_at, updated_at
 	  )
 	  VALUES ($1, $2, $3, $4, $5, 'scheduled', $6::jsonb, NOW(), NOW())
 	  RETURNING *
 	  `,
-	  [
-		sessionId,
-		req.user.id,
-		service.id,
-		title,
-		pinCode,
-		JSON.stringify(sessionSettings)
-	  ]
+	  [sessionId, req.user.id, service.id, title, pinCode, JSON.stringify(sessionSettings)]
 	);
 
 	return res.json({
@@ -185,10 +193,7 @@ const sessionSettings = {
 	});
   } catch (e) {
 	console.error('createSession error:', e);
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось создать сессию'
-	});
+	return res.status(500).json({ success: false, message: 'Не удалось создать сессию' });
   }
 }
 
@@ -196,24 +201,29 @@ const sessionSettings = {
 
 async function getSessionById(req, res) {
   try {
-const result = await pool.query(
-	`
-	SELECT
-	  s.*,
-	  sv.code AS service_type
-	FROM sessions s
-	LEFT JOIN services sv ON sv.id = s.service_id
-	WHERE s.id = $1
-	  AND s.user_id = $2
-	LIMIT 1
-	`,
-	[req.params.id, req.user.id]
-  );
+	const result = await pool.query(
+		`
+		SELECT
+		  s.*,
+		  sv.code AS service_type
+		FROM sessions s
+		LEFT JOIN services sv ON sv.id = s.service_id
+		WHERE s.id = $1
+		  AND s.user_id = $2
+		LIMIT 1
+		`,
+		[req.params.id, req.user.id]
+	  );
 
 	if (!result.rows[0]) {
-	  return res.status(404).json({
+	  return res.status(404).json({ success: false, message: 'Сессия не найдена' });
+	}
+
+	// 🟢 ПРОВЕРКА ПОДПИСКИ ПРИ ОТКРЫТИИ СЕССИИ (По прямой ссылке не пройдет)
+	if (isPremiumAccessDenied(req.user, result.rows[0].service_type)) {
+	  return res.status(403).json({
 		success: false,
-		message: 'Сессия не найдена'
+		message: 'Подписка истекла. Доступ к этой сессии приостановлен.'
 	  });
 	}
 
@@ -223,10 +233,7 @@ const result = await pool.query(
 	});
   } catch (e) {
 	console.error('getSessionById error:', e);
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось получить сессию'
-	});
+	return res.status(500).json({ success: false, message: 'Не удалось получить сессию' });
   }
 }
 
@@ -236,10 +243,10 @@ async function updateSession(req, res) {
   try {
 	const current = await pool.query(
 	  `
-	  SELECT *
-	  FROM sessions
-	  WHERE id = $1
-		AND user_id = $2
+	  SELECT s.*, sv.code AS service_type
+	  FROM sessions s
+	  LEFT JOIN services sv ON sv.id = s.service_id
+	  WHERE s.id = $1 AND s.user_id = $2
 	  LIMIT 1
 	  `,
 	  [req.params.id, req.user.id]
@@ -248,30 +255,21 @@ async function updateSession(req, res) {
 	const session = current.rows[0];
 
 	if (!session) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Сессия не найдена'
-	  });
+	  return res.status(404).json({ success: false, message: 'Сессия не найдена' });
 	}
 
-const {
-	  title,
-	  deckId,
-	  cardMode,
-	  randomCardsCount,
-	  maxCardsOnScreen,
-	  timerEnabled,
-	  timerMinutes,
-	  replaceCardEnabled,
-	  questionsEnabled,
-	  questions
+	// 🟢 ПРОВЕРКА ПОДПИСКИ ПРИ СОХРАНЕНИИ НАСТРОЕК
+	if (isPremiumAccessDenied(req.user, session.service_type)) {
+	  return res.status(403).json({ success: false, message: 'Подписка истекла. Сохранение запрещено.' });
+	}
+
+	const {
+	  title, deckId, cardMode, randomCardsCount, maxCardsOnScreen,
+	  timerEnabled, timerMinutes, replaceCardEnabled, questionsEnabled, questions
 	} = req.body;
 
-const nextSettings = {
-	  ...(session.settings || {})
-	};
+	const nextSettings = { ...(session.settings || {}) };
 	
-	// Настройки карт (из корня body)
 	if (deckId !== undefined) nextSettings.deckId = deckId;
 	if (cardMode !== undefined) nextSettings.cardMode = cardMode;
 	if (randomCardsCount !== undefined) nextSettings.randomCardsCount = randomCardsCount;
@@ -282,7 +280,6 @@ const nextSettings = {
 	if (questionsEnabled !== undefined) nextSettings.questionsEnabled = Boolean(questionsEnabled);
 	if (questions !== undefined) nextSettings.questions = questions;
 	
-	// Настройки Облака (из объекта settings в body)
 	if (req.body.settings) {
 	  if (req.body.settings.palette !== undefined) nextSettings.palette = req.body.settings.palette;
 	  if (req.body.settings.question !== undefined) nextSettings.question = String(req.body.settings.question);
@@ -296,34 +293,18 @@ const nextSettings = {
 	const result = await pool.query(
 	  `
 	  UPDATE sessions
-	  SET
-		title = COALESCE($1, title),
-		settings = $2::jsonb,
-		updated_at = NOW()
-	  WHERE id = $3
-		AND user_id = $4
+	  SET title = COALESCE($1, title), settings = $2::jsonb, updated_at = NOW()
+	  WHERE id = $3 AND user_id = $4
 	  RETURNING *
 	  `,
-	  [
-		title !== undefined ? title : null,
-		JSON.stringify(nextSettings),
-		req.params.id,
-		req.user.id
-	  ]
+	  [title !== undefined ? title : null, JSON.stringify(nextSettings), req.params.id, req.user.id]
 	);
 
-broadcastToSession(req.params.id, { type: 'session_updated' });
-	return res.json({
-	  success: true,
-	  message: 'Сессия обновлена',
-	  session: formatSession(result.rows[0])
-	});
+	broadcastToSession(req.params.id, { type: 'session_updated' });
+	return res.json({ success: true, message: 'Сессия обновлена', session: formatSession(result.rows[0]) });
   } catch (e) {
 	console.error('updateSession error:', e);
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось обновить сессию'
-	});
+	return res.status(500).json({ success: false, message: 'Не удалось обновить сессию' });
   }
 }
 
@@ -333,10 +314,10 @@ async function scheduleSession(req, res) {
   try {
 	const check = await pool.query(
 	  `
-	  SELECT *
-	  FROM sessions
-	  WHERE id = $1
-		AND user_id = $2
+	  SELECT s.*, sv.code AS service_type
+	  FROM sessions s
+	  LEFT JOIN services sv ON sv.id = s.service_id
+	  WHERE s.id = $1 AND s.user_id = $2
 	  LIMIT 1
 	  `,
 	  [req.params.id, req.user.id]
@@ -345,63 +326,37 @@ async function scheduleSession(req, res) {
 	const session = check.rows[0];
 
 	if (!session) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Сессия не найдена'
-	  });
+	  return res.status(404).json({ success: false, message: 'Сессия не найдена' });
+	}
+
+	// 🟢 ПРОВЕРКА ПОДПИСКИ
+	if (isPremiumAccessDenied(req.user, session.service_type)) {
+	  return res.status(403).json({ success: false, message: 'Подписка истекла.' });
 	}
 
 	if (session.status !== 'scheduled') {
 	  const limitCheck = await ensureOpenSessionsLimit(req.user.id, session.id);
 	  if (!limitCheck.ok) {
-		return res.status(400).json({
-		  success: false,
-		  message: limitCheck.message
-		});
+		return res.status(400).json({ success: false, message: limitCheck.message });
 	  }
 	}
 
-await pool.query(
-	  `
-	  UPDATE participants
-	  SET status = 'left',
-		  left_at = NOW(),
-		  leave_reason = 'session_scheduled'
-	  WHERE session_id = $1
-		AND status = 'active'
-	  `,
+	await pool.query(
+	  `UPDATE participants SET status = 'left', left_at = NOW(), leave_reason = 'session_scheduled' WHERE session_id = $1 AND status = 'active'`,
+	  [session.id]
+	);
+	
+	await pool.query(
+	  `UPDATE screen_cards SET is_active = false, removed_at = NOW() WHERE session_id = $1 AND is_active = true`,
 	  [session.id]
 	);
 	
 	await pool.query(
 	  `
-	  UPDATE screen_cards
-	  SET is_active = false,
-		  removed_at = NOW()
-	  WHERE session_id = $1
-		AND is_active = true
-	  `,
-	  [session.id]
-	);
-	
-	await pool.query(
-	  `
-	  INSERT INTO timer_states (
-		session_id,
-		duration_seconds,
-		started_at,
-		ends_at,
-		state,
-		updated_at
-	  )
+	  INSERT INTO timer_states (session_id, duration_seconds, started_at, ends_at, state, updated_at)
 	  VALUES ($1, $2, NULL, NULL, 'idle', NOW())
 	  ON CONFLICT (session_id)
-	  DO UPDATE SET
-		duration_seconds = EXCLUDED.duration_seconds,
-		started_at = NULL,
-		ends_at = NULL,
-		state = 'idle',
-		updated_at = NOW()
+	  DO UPDATE SET duration_seconds = EXCLUDED.duration_seconds, started_at = NULL, ends_at = NULL, state = 'idle', updated_at = NOW()
 	  `,
 	  [session.id, (session.settings?.timerMinutes || 3) * 60]
 	);
@@ -411,38 +366,21 @@ await pool.query(
 	  INSERT INTO question_states (session_id, current_index, updated_at)
 	  VALUES ($1, 0, NOW())
 	  ON CONFLICT (session_id)
-	  DO UPDATE SET
-		current_index = 0,
-		updated_at = NOW()
+	  DO UPDATE SET current_index = 0, updated_at = NOW()
 	  `,
 	  [session.id]
 	);
 
 	const result = await pool.query(
-	  `
-	  UPDATE sessions
-	  SET
-		status = 'scheduled',
-		updated_at = NOW()
-	  WHERE id = $1
-		AND user_id = $2
-	  RETURNING *
-	  `,
+	  `UPDATE sessions SET status = 'scheduled', updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING *`,
 	  [req.params.id, req.user.id]
 	);
 
 	broadcastToSession(req.params.id, { type: 'session_updated' });
-	return res.json({
-	  success: true,
-	  message: 'Сессия запланирована',
-	  session: formatSession(result.rows[0])
-	});
+	return res.json({ success: true, message: 'Сессия запланирована', session: formatSession(result.rows[0]) });
   } catch (e) {
 	console.error('scheduleSession error:', e);
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось запланировать сессию'
-	});
+	return res.status(500).json({ success: false, message: 'Не удалось запланировать сессию' });
   }
 }
 
@@ -452,10 +390,10 @@ async function startSession(req, res) {
   try {
 	const check = await pool.query(
 	  `
-	  SELECT *
-	  FROM sessions
-	  WHERE id = $1
-		AND user_id = $2
+	  SELECT s.*, sv.code AS service_type
+	  FROM sessions s
+	  LEFT JOIN services sv ON sv.id = s.service_id
+	  WHERE s.id = $1 AND s.user_id = $2
 	  LIMIT 1
 	  `,
 	  [req.params.id, req.user.id]
@@ -464,53 +402,30 @@ async function startSession(req, res) {
 	const session = check.rows[0];
 
 	if (!session) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Сессия не найдена'
-	  });
+	  return res.status(404).json({ success: false, message: 'Сессия не найдена' });
 	}
 
-await pool.query(
-	  `
-	  UPDATE participants
-	  SET status = 'left',
-		  left_at = NOW(),
-		  leave_reason = 'session_restarted'
-	  WHERE session_id = $1
-		AND status = 'active'
-	  `,
+	// 🟢 ПРОВЕРКА ПОДПИСКИ (Блокируем запуск сессии через API)
+	if (isPremiumAccessDenied(req.user, session.service_type)) {
+	  return res.status(403).json({ success: false, message: 'Подписка истекла. Запуск запрещен.' });
+	}
+
+	await pool.query(
+	  `UPDATE participants SET status = 'left', left_at = NOW(), leave_reason = 'session_restarted' WHERE session_id = $1 AND status = 'active'`,
+	  [session.id]
+	);
+	
+	await pool.query(
+	  `UPDATE screen_cards SET is_active = false, removed_at = NOW() WHERE session_id = $1 AND is_active = true`,
 	  [session.id]
 	);
 	
 	await pool.query(
 	  `
-	  UPDATE screen_cards
-	  SET is_active = false,
-		  removed_at = NOW()
-	  WHERE session_id = $1
-		AND is_active = true
-	  `,
-	  [session.id]
-	);
-	
-	await pool.query(
-	  `
-	  INSERT INTO timer_states (
-		session_id,
-		duration_seconds,
-		started_at,
-		ends_at,
-		state,
-		updated_at
-	  )
+	  INSERT INTO timer_states (session_id, duration_seconds, started_at, ends_at, state, updated_at)
 	  VALUES ($1, $2, NULL, NULL, 'idle', NOW())
 	  ON CONFLICT (session_id)
-	  DO UPDATE SET
-		duration_seconds = EXCLUDED.duration_seconds,
-		started_at = NULL,
-		ends_at = NULL,
-		state = 'idle',
-		updated_at = NOW()
+	  DO UPDATE SET duration_seconds = EXCLUDED.duration_seconds, started_at = NULL, ends_at = NULL, state = 'idle', updated_at = NOW()
 	  `,
 	  [session.id, (session.settings?.timerMinutes || 3) * 60]
 	);
@@ -520,39 +435,21 @@ await pool.query(
 	  INSERT INTO question_states (session_id, current_index, updated_at)
 	  VALUES ($1, 0, NOW())
 	  ON CONFLICT (session_id)
-	  DO UPDATE SET
-		current_index = 0,
-		updated_at = NOW()
+	  DO UPDATE SET current_index = 0, updated_at = NOW()
 	  `,
 	  [session.id]
 	);
 
 	const result = await pool.query(
-	  `
-	  UPDATE sessions
-	  SET
-		status = 'live',
-		started_at = NOW(),
-		updated_at = NOW()
-	  WHERE id = $1
-		AND user_id = $2
-	  RETURNING *
-	  `,
+	  `UPDATE sessions SET status = 'live', started_at = NOW(), updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING *`,
 	  [req.params.id, req.user.id]
 	);
 
 	broadcastToSession(req.params.id, { type: 'session_updated' });
-	return res.json({
-	  success: true,
-	  message: 'Сессия начата',
-	  session: formatSession(result.rows[0])
-	});
+	return res.json({ success: true, message: 'Сессия начата', session: formatSession(result.rows[0]) });
   } catch (e) {
 	console.error('startSession error:', e);
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось запустить сессию'
-	});
+	return res.status(500).json({ success: false, message: 'Не удалось запустить сессию' });
   }
 }
 
@@ -562,10 +459,10 @@ async function getSessionParticipants(req, res) {
   try {
 	const check = await pool.query(
 	  `
-	  SELECT *
-	  FROM sessions
-	  WHERE id = $1
-		AND user_id = $2
+	  SELECT s.*, sv.code AS service_type
+	  FROM sessions s
+	  LEFT JOIN services sv ON sv.id = s.service_id
+	  WHERE s.id = $1 AND s.user_id = $2
 	  LIMIT 1
 	  `,
 	  [req.params.id, req.user.id]
@@ -574,72 +471,44 @@ async function getSessionParticipants(req, res) {
 	const session = check.rows[0];
 
 	if (!session) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Сессия не найдена'
-	  });
+	  return res.status(404).json({ success: false, message: 'Сессия не найдена' });
+	}
+
+	if (isPremiumAccessDenied(req.user, session.service_type)) {
+	  return res.status(403).json({ success: false, message: 'Доступ закрыт' });
 	}
 
 	cleanupStaleParticipants(session.id);
 
-const result = await pool.query(
-	  `
-	  SELECT *
-	  FROM participants
-	  WHERE session_id = $1
-		AND status = 'active'
-	  ORDER BY joined_at ASC
-	  `,
+	const result = await pool.query(
+	  `SELECT * FROM participants WHERE session_id = $1 AND status = 'active' ORDER BY joined_at ASC`,
 	  [req.params.id]
 	);
 	
 	const list = result.rows.map((p) => ({
-	  id: p.id,
-	  sessionId: p.session_id,
-	  displayName: p.display_name,
-	  source: p.source,
-	  status: p.status,
-	  joinedAt: p.joined_at,
-	  lastSeenAt: p.last_seen_at
+	  id: p.id, sessionId: p.session_id, displayName: p.display_name,
+	  source: p.source, status: p.status, joinedAt: p.joined_at, lastSeenAt: p.last_seen_at
 	}));
 	
-	return res.json({
-	  success: true,
-	  participants: list
-	});
+	return res.json({ success: true, participants: list });
 	
   } catch (e) {
 	console.error('getSessionParticipants error:', e);
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось получить участников'
-	});
+	return res.status(500).json({ success: false, message: 'Не удалось получить участников' });
   }
 }
 
 // ================= DELETE =================
-
+// 🟢 УДАЛЕНИЕ СЕССИЙ ОСТАВЛЯЕМ ОТКРЫТЫМ ДАЖЕ БЕЗ ПОДПИСКИ!
 async function deleteSession(req, res) {
   try {
-	await pool.query(
-	  `
-	  DELETE FROM sessions
-	  WHERE id = $1
-		AND user_id = $2
-	  `,
-	  [req.params.id, req.user.id]
-	);
+	await pool.query(`DELETE FROM sessions WHERE id = $1 AND user_id = $2`, [req.params.id, req.user.id]);
 	
 	broadcastToSession(req.params.id, { type: 'session_deleted' });
-	return res.json({
-	  success: true
-	});
+	return res.json({ success: true });
   } catch (e) {
 	console.error('deleteSession error:', e);
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось удалить сессию'
-	});
+	return res.status(500).json({ success: false, message: 'Не удалось удалить сессию' });
   }
 }
 
@@ -647,83 +516,48 @@ async function kickParticipant(req, res) {
   try {
 	const sessionResult = await pool.query(
 	  `
-	  SELECT *
-	  FROM sessions
-	  WHERE id = $1 AND user_id = $2
+	  SELECT s.*, sv.code AS service_type
+	  FROM sessions s
+	  LEFT JOIN services sv ON sv.id = s.service_id
+	  WHERE s.id = $1 AND s.user_id = $2
 	  LIMIT 1
 	  `,
-	  [req.params.id, req.user.id] // 🔥 Добавили проверку владельца сессии
+	  [req.params.id, req.user.id]
 	);
 
 	const session = sessionResult.rows[0];
 
 	if (!session) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Сессия не найдена или вы не являетесь ее владельцем'
-	  });
+	  return res.status(404).json({ success: false, message: 'Сессия не найдена или вы не являетесь ее владельцем' });
+	}
+
+	if (isPremiumAccessDenied(req.user, session.service_type)) {
+	  return res.status(403).json({ success: false, message: 'Доступ закрыт' });
 	}
 
 	const participantResult = await pool.query(
-	  `
-	  SELECT *
-	  FROM participants
-	  WHERE id = $1
-		AND session_id = $2
-	  LIMIT 1
-	  `,
+	  `SELECT * FROM participants WHERE id = $1 AND session_id = $2 LIMIT 1`,
 	  [req.params.participantId, session.id]
 	);
 
 	const participant = participantResult.rows[0];
 
 	if (!participant) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Участник не найден'
-	  });
+	  return res.status(404).json({ success: false, message: 'Участник не найден' });
 	}
 
-	await pool.query(
-	  `
-	  UPDATE participants
-	  SET status = 'kicked',
-		  left_at = NOW(),
-		  leave_reason = 'kicked'
-	  WHERE id = $1
-	  `,
-	  [participant.id]
-	);
-
-	await pool.query(
-	  `
-	  UPDATE screen_cards
-	  SET is_active = false,
-		  removed_at = NOW()
-	  WHERE participant_id = $1
-		AND session_id = $2
-		AND is_active = true
-	  `,
-	  [participant.id, session.id]
-	);
+	await pool.query(`UPDATE participants SET status = 'kicked', left_at = NOW(), leave_reason = 'kicked' WHERE id = $1`, [participant.id]);
+	await pool.query(`UPDATE screen_cards SET is_active = false, removed_at = NOW() WHERE participant_id = $1 AND session_id = $2 AND is_active = true`, [participant.id, session.id]);
 
 	broadcastToSession(session.id, { type: 'participant_left', participantId: participant.id });
 	return res.json({
 	  success: true,
 	  message: 'Участник удалён из комнаты',
-	  participant: {
-		id: participant.id,
-		sessionId: participant.session_id,
-		displayName: participant.display_name,
-		status: 'kicked'
-	  }
+	  participant: { id: participant.id, sessionId: participant.session_id, displayName: participant.display_name, status: 'kicked' }
 	});
   } catch (error) {
 	console.error('kickParticipant error:', error);
-	return res.status(500).json({
-	  success: false,
-	  message: 'Не удалось удалить участника'
-	});
+	return res.status(500).json({ success: false, message: 'Не удалось удалить участника' });
   }
 }
 

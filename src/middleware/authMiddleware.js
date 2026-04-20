@@ -12,27 +12,24 @@ async function protect(req, res, next) {
 	  // Расшифровываем токен
 	  const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-	  // Ищем юзера и кладем его ID в req.user
-	  const result = await pool.query('SELECT id, email FROM users WHERE id = $1', [decoded.id]);
+	  // 🟢 ИЗМЕНЕНИЕ: Достаем дату окончания подписки вместе с ID и email
+	  const result = await pool.query('SELECT id, email, subscription_expires_at FROM users WHERE id = $1', [decoded.id]);
 	  
 	  if (!result.rows.length) {
 		  return res.status(401).json({ success: false, message: 'Пользователь не найден' });
 	  }
 
+	  // Теперь req.user знает всё о подписке
 	  req.user = result.rows[0];
 	  
-	  // --- НОВОЕ: БЕЗОПАСНОЕ ОБНОВЛЕНИЕ ВРЕМЕНИ ---
-	  // Оборачиваем в try...catch, чтобы ошибка базы НЕ выкидывала пользователя
+	  // --- БЕЗОПАСНОЕ ОБНОВЛЕНИЕ ВРЕМЕНИ ---
 	  if (req.user) {
 		try {
-		  // Убрали "AND token = ...", обновляем просто по user_id
 		  await pool.query(
 			"UPDATE sessions SET last_active_at = CURRENT_TIMESTAMP WHERE user_id = $1",
 			[req.user.id]
 		  );
 		} catch (dbError) {
-		  // Если вдруг базы нет или колонки нет, сервер просто напишет это в лог, 
-		  // но пропустит пользователя дальше!
 		  console.error('Некритичная ошибка продления сессии:', dbError.message);
 		}
 	  }
