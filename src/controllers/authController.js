@@ -5,12 +5,12 @@ const nodemailer = require('nodemailer');
 
 // === 1. НАСТРОЙКА ПОЧТЫ REG.RU ===
 const transporter = nodemailer.createTransport({
-  host: 'mail.hosting.reg.ru', // Стандартный сервер REG.RU
-  port: 465,                   // Безопасный порт
+  host: 'mail.hosting.reg.ru',
+  port: 465,
   secure: true,                
   auth: {
-	user: 'support@f-kit.ru',     // 🔴 ВПИШИ СЮДА СОЗДАННЫЙ ЯЩИК ЦЕЛИКОМ
-	pass: 'zN3iN5vJ0coS8wB4'  // 🔴 ВПИШИ ПАРОЛЬ, КОТОРЫЙ ТЫ ПРИДУМАЛ В ШАГЕ 1
+	user: 'support@f-kit.ru',
+	pass: 'zN3iN5vJ0coS8wB4'
   }
 });
 
@@ -19,7 +19,7 @@ const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
 };
 
-// Регистрация с логикой бета-периода
+// Регистрация
 async function register(req, res) {
   try {
 	const { email, password, promoCode } = req.body;
@@ -39,15 +39,12 @@ async function register(req, res) {
 
 	const hashedPassword = await bcrypt.hash(password, 10);
 
-	// --- ВРЕМЕННАЯ ЛОГИКА ОПЛАТЫ (НАЧАЛО) ---
-	// Если регистрация прошла (а она проходит только с промокодом), 
-	// мы сразу ставим дату окончания через 60 дней.
 	const expiresAt = new Date();
 	expiresAt.setDate(expiresAt.getDate() + 60);
-	// --- ВРЕМЕННАЯ ЛОГИКА ОПЛАТЫ (КОНЕЦ) ---
 
+	// 🟢 ДОБАВЛЕНО: NOW() для subscription_updated_at при регистрации
 	const newUser = await pool.query(
-	  'INSERT INTO users (email, password_hash, subscription_type, subscription_expires_at) VALUES ($1, $2, $3, $4) RETURNING id, email',
+	  'INSERT INTO users (email, password_hash, subscription_type, subscription_expires_at, subscription_updated_at) VALUES ($1, $2, $3, $4, NOW()) RETURNING id, email',
 	  [email, hashedPassword, 'ALLIN', expiresAt]
 	);
 
@@ -81,10 +78,9 @@ async function login(req, res) {
   }
 }
 
-// Получение данных профиля (Здесь Хаб будет узнавать срок подписки)
+// Получение данных профиля
 async function getMe(req, res) {
   try {
-	// Запрашиваем из базы тип подписки и дату окончания
 	const result = await pool.query(
 	  'SELECT id, email, subscription_type, subscription_expires_at FROM users WHERE id = $1', 
 	  [req.user.id]
@@ -108,20 +104,17 @@ async function getMe(req, res) {
 // 1. Получение статистики и списка всех пользователей
 async function getAdminData(req, res) {
   try {
-	// ВПИШИ СЮДА СВОЙ EMAIL
 	const SUPER_ADMIN = 'support@f-kit.ru'; 
 
-	// Проверяем, кто делает запрос
 	const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
 	if (!userRes.rows[0] || userRes.rows[0].email !== SUPER_ADMIN) {
 	  return res.status(403).json({ success: false, message: 'Доступ запрещен. Вы не администратор.' });
 	}
 
-	// Собираем данные
-	const usersResult = await pool.query('SELECT id, email, subscription_type, subscription_expires_at, created_at FROM users ORDER BY created_at DESC');
+	// 🟢 ДОБАВЛЕНО: Вытаскиваем created_at и subscription_updated_at
+	const usersResult = await pool.query('SELECT id, email, subscription_type, subscription_expires_at, created_at, subscription_updated_at FROM users ORDER BY created_at DESC');
 	const totalUsers = usersResult.rowCount;
 	
-	// Считаем "одновременные подключения" (количество сессий со статусом live)
 	const liveSessionsResult = await pool.query("SELECT COUNT(*) FROM sessions WHERE status = 'live'");
 	const liveSessions = liveSessionsResult.rows[0].count;
 
@@ -147,12 +140,12 @@ async function updateSubscription(req, res) {
 
 	const { targetUserId, days } = req.body;
 
-	// Устанавливаем новую дату (текущее время + X дней)
 	const newDate = new Date();
 	newDate.setDate(newDate.getDate() + parseInt(days));
 
+	// 🟢 ДОБАВЛЕНО: Обновляем subscription_updated_at текущим временем
 	await pool.query(
-	  'UPDATE users SET subscription_expires_at = $1 WHERE id = $2',
+	  'UPDATE users SET subscription_expires_at = $1, subscription_updated_at = NOW() WHERE id = $2',
 	  [newDate, targetUserId]
 	);
 
@@ -163,17 +156,16 @@ async function updateSubscription(req, res) {
   }
 }
 
-// 3. Закрытие всех активных сессий пользователя
+// 3. Закрытие всех активных сессий
 async function closeUserSessions(req, res) {
   try {
-	const SUPER_ADMIN = 'support@f-kit.ru'; // Твой email
+	const SUPER_ADMIN = 'support@f-kit.ru'; 
 	const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
 	if (!userRes.rows[0] || userRes.rows[0].email !== SUPER_ADMIN) {
 	  return res.status(403).json({ success: false, message: 'Доступ запрещен' });
 	}
 
 	const { targetUserId } = req.body;
-	// Удаляем все сессии этого пользователя со статусом live
 	await pool.query("DELETE FROM sessions WHERE user_id = $1 AND status = 'live'", [targetUserId]);
 
 	res.json({ success: true, message: 'Активные сессии закрыты' });
@@ -186,7 +178,7 @@ async function closeUserSessions(req, res) {
 // 4. Полное удаление пользователя
 async function deleteUser(req, res) {
   try {
-	const SUPER_ADMIN = 'support@f-kit.ru'; // Твой email
+	const SUPER_ADMIN = 'support@f-kit.ru'; 
 	const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
 	if (!userRes.rows[0] || userRes.rows[0].email !== SUPER_ADMIN) {
 	  return res.status(403).json({ success: false, message: 'Доступ запрещен' });
@@ -194,10 +186,7 @@ async function deleteUser(req, res) {
 
 	const { targetUserId } = req.body;
 	
-	// ВАЖНО: Сначала удаляем ВСЕ сессии пользователя, чтобы база данных не ругалась на связанные данные
 	await pool.query('DELETE FROM sessions WHERE user_id = $1', [targetUserId]);
-	
-	// Теперь удаляем саму учетную запись
 	await pool.query('DELETE FROM users WHERE id = $1', [targetUserId]);
 
 	res.json({ success: true, message: 'Пользователь и его сессии удалены' });
@@ -207,7 +196,7 @@ async function deleteUser(req, res) {
   }
 }
 
-// === 1. ФУНКЦИЯ ЗАПРОСА СБРОСА (Отправляет ссылку) ===
+// === СБРОС ПАРОЛЯ ===
 async function forgotPassword(req, res) {
   try {
 	const { email } = req.body;
@@ -222,7 +211,6 @@ async function forgotPassword(req, res) {
 	const resetToken = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '15m' });
 	const resetLink = `https://api.f-kit.ru/auth/reset-confirm?token=${resetToken}`;
 
-	// ПЕРВОЕ ПИСЬМО: Фирменный сине-желтый стиль
 	await transporter.sendMail({
 	  from: '"Команда F-Kit" <support@f-kit.ru>',
 	  to: email,
@@ -251,7 +239,6 @@ async function forgotPassword(req, res) {
   }
 }
 
-// === 2. ФУНКЦИЯ ПОДТВЕРЖДЕНИЯ (Меняет пароль и отправляет второе письмо) ===
 async function confirmPasswordReset(req, res) {
   try {
 	const { token } = req.query;
@@ -260,20 +247,16 @@ async function confirmPasswordReset(req, res) {
 	const decoded = jwt.verify(token, process.env.JWT_SECRET);
 	const userId = decoded.id;
 
-	// 1. Ищем пользователя, чтобы узнать его email
 	const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [userId]);
 	if (userRes.rows.length === 0) return res.status(404).send('Пользователь не найден');
 	const userEmail = userRes.rows[0].email;
 
-	// 2. Генерируем новый пароль
 	const newPassword = Math.random().toString(36).slice(-8);
 	const salt = await bcrypt.genSalt(10);
 	const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-	// 3. Сохраняем в базу
 	await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedPassword, userId]);
 
-// 4. ВТОРОЕ ПИСЬМО: Отправляем сам пароль в фирменном стиле (ОБНОВЛЕННЫЙ СТИЛЬ)
 	await transporter.sendMail({
 	  from: '"Команда F-Kit" <support@f-kit.ru>',
 	  to: userEmail,
@@ -298,8 +281,7 @@ async function confirmPasswordReset(req, res) {
 	  `
 	});
 
-	// 5. ЭКРАН УСПЕХА: Показываем в браузере (БЕЗ ПАРОЛЯ)
-const htmlResponse = `
+	const htmlResponse = `
 	  <!DOCTYPE html>
 	  <html lang="ru">
 	  <head>
