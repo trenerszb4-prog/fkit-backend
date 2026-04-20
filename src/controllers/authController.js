@@ -163,7 +163,7 @@ async function getAdminData(req, res) {
   }
 }
 
-// 2. Ручное изменение подписки
+// 2. Ручное изменение подписки (и обнуление)
 async function updateSubscription(req, res) {
   try {
 	const SUPER_ADMIN = 'support@f-kit.ru'; 
@@ -174,6 +174,16 @@ async function updateSubscription(req, res) {
 
 	const { targetUserId, days } = req.body;
 
+	// 🟢 ЕСЛИ ПЕРЕДАЛИ 0 — ОБНУЛЯЕМ (СТАВИМ ВЧЕРАШНЮЮ ДАТУ)
+	if (parseInt(days) === 0) {
+	  await pool.query(
+		"UPDATE users SET subscription_expires_at = NOW() - INTERVAL '1 day', subscription_updated_at = NOW() WHERE id = $1",
+		[targetUserId]
+	  );
+	  return res.json({ success: true, message: 'Подписка обнулена' });
+	}
+
+	// Обычное начисление дней
 	const newDate = new Date();
 	newDate.setDate(newDate.getDate() + parseInt(days));
 
