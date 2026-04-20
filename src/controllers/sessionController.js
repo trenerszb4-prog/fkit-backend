@@ -145,6 +145,7 @@ const sessionSettings = {
 	  
 	  // Настройки Облака слов
 	  palette: req.body.settings?.palette || 'fkit',
+	  question: req.body.settings?.question || '',
 	  animationEnabled: req.body.settings?.animationEnabled !== undefined ? Boolean(req.body.settings.animationEnabled) : true,
 	  saveResult: req.body.settings?.saveResult !== undefined ? Boolean(req.body.settings.saveResult) : true,
 	  bgWordsEnabled: req.body.settings?.bgWordsEnabled !== undefined ? Boolean(req.body.settings.bgWordsEnabled) : false,
@@ -284,6 +285,7 @@ const nextSettings = {
 	// Настройки Облака (из объекта settings в body)
 	if (req.body.settings) {
 	  if (req.body.settings.palette !== undefined) nextSettings.palette = req.body.settings.palette;
+	  if (req.body.settings.question !== undefined) nextSettings.question = String(req.body.settings.question);
 	  if (req.body.settings.animationEnabled !== undefined) nextSettings.animationEnabled = Boolean(req.body.settings.animationEnabled);
 	  if (req.body.settings.saveResult !== undefined) nextSettings.saveResult = Boolean(req.body.settings.saveResult);
 	  if (req.body.settings.bgWordsEnabled !== undefined) nextSettings.bgWordsEnabled = Boolean(req.body.settings.bgWordsEnabled);
