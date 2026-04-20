@@ -113,16 +113,17 @@ async function getAdminData(req, res) {
 	const usersResult = await pool.query('SELECT id, email, subscription_type, subscription_expires_at, created_at, subscription_updated_at FROM users ORDER BY created_at DESC');
 	const totalUsers = usersResult.rowCount;
 	
-	const liveSessionsResult = await pool.query("SELECT COUNT(*) FROM sessions WHERE status = 'live'");
+	// 🟢 ДОБАВЛЕНО ::int для жесткой конвертации в число
+	const liveSessionsResult = await pool.query("SELECT COUNT(*)::int FROM sessions WHERE status = 'live'");
 	const liveSessions = liveSessionsResult.rows[0].count;
 
-	// 🟢 ДОБАВЛЕНО: Считаем запланированные сессии
-	const scheduledSessionsResult = await pool.query("SELECT COUNT(*) FROM sessions WHERE status = 'scheduled'");
+	// 🟢 ДОБАВЛЕНО ::int для жесткой конвертации в число
+	const scheduledSessionsResult = await pool.query("SELECT COUNT(*)::int FROM sessions WHERE status = 'scheduled'");
 	const scheduledSessions = scheduledSessionsResult.rows[0].count;
 
 	res.json({
 	  success: true,
-	  stats: { totalUsers, liveSessions, scheduledSessions }, // 🟢 Передаем на фронтенд
+	  stats: { totalUsers, liveSessions, scheduledSessions }, 
 	  users: usersResult.rows
 	});
   } catch (error) {
