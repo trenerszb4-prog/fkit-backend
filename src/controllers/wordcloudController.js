@@ -75,9 +75,44 @@ async function clearWords(req, res) {
   }
 }
 
-// ВОТ ЭТОТ БЛОК КРИТИЧЕСКИ ВАЖЕН:
+// 🟢 НОВАЯ ФУНКЦИЯ УДАЛЕНИЯ КОНКРЕТНОГО СЛОВА
+async function deleteWord(req, res) {
+  try {
+	const { sessionId, word } = req.params;
+	const userId = req.user.id; 
+
+	// Проверяем, принадлежит ли сессия пользователю (фасилитатору)
+	const sessionCheck = await pool.query(
+	  `SELECT id FROM sessions WHERE id = $1 AND user_id = $2 LIMIT 1`,
+	  [sessionId, userId]
+	);
+
+	if (sessionCheck.rows.length === 0) {
+	  return res.status(403).json({ success: false, message: 'Нет прав на удаление из этой сессии' });
+	}
+
+	const cleanWord = word.trim().toLowerCase();
+
+	await pool.query(
+	  `DELETE FROM wordcloud_words WHERE session_id = $1 AND word = $2`,
+	  [sessionId, cleanWord]
+	);
+
+	// Рассылаем сигнал всем экранам для мгновенного обновления облака
+	if (typeof broadcastToSession === 'function') {
+	  broadcastToSession(sessionId, { type: 'cloud_cleared' }); 
+	}
+
+	return res.json({ success: true, message: 'Слово удалено' });
+  } catch (error) {
+	console.error('deleteWord error:', error);
+	return res.status(500).json({ success: false, message: 'Ошибка удаления слова' });
+  }
+}
+
 module.exports = {
   getWords,
   addWord,
-  clearWords
+  clearWords,
+  deleteWord
 };

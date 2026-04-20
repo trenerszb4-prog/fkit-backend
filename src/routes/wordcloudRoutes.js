@@ -23,14 +23,31 @@ router.post('/:sessionId/clear', (req, res, next) => {
   const authFn = typeof authMod === 'function' ? authMod : (authMod.authMiddleware || authMod.verifyToken || authMod.protect || Object.values(authMod)[0]);
   
   if (typeof authFn !== 'function') {
-	return res.status(500).json({ success: false, message: 'Мидлвар авторизации не найден' });
+  return res.status(500).json({ success: false, message: 'Мидлвар авторизации не найден' });
   }
 
   // Сначала проверяем токен, затем вызываем очистку
   authFn(req, res, () => {
-	const ctrl = require('../controllers/wordcloudController');
-	if (!ctrl.clearWords) return res.status(500).json({ success: false, message: 'clearWords не найдена' });
-	return ctrl.clearWords(req, res, next);
+  const ctrl = require('../controllers/wordcloudController');
+  if (!ctrl.clearWords) return res.status(500).json({ success: false, message: 'clearWords не найдена' });
+  return ctrl.clearWords(req, res, next);
+  });
+});
+
+// 🟢 НОВЫЙ МАРШРУТ ДЛЯ УДАЛЕНИЯ КОНКРЕТНОГО СЛОВА
+router.delete('/:sessionId/words/:word', (req, res, next) => {
+  const authMod = require('../middleware/authMiddleware');
+  const authFn = typeof authMod === 'function' ? authMod : (authMod.authMiddleware || authMod.verifyToken || authMod.protect || Object.values(authMod)[0]);
+  
+  if (typeof authFn !== 'function') {
+  return res.status(500).json({ success: false, message: 'Мидлвар авторизации не найден' });
+  }
+
+  // Сначала проверяем токен фасилитатора, затем вызываем удаление
+  authFn(req, res, () => {
+  const ctrl = require('../controllers/wordcloudController');
+  if (!ctrl.deleteWord) return res.status(500).json({ success: false, message: 'deleteWord не найдена' });
+  return ctrl.deleteWord(req, res, next);
   });
 });
 
