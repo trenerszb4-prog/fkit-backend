@@ -22,18 +22,17 @@ async function protect(req, res, next) {
 	  // Теперь req.user знает всё о подписке
 	  req.user = result.rows[0];
 	  
-	  // --- БЕЗОПАСНОЕ ОБНОВЛЕНИЕ ВРЕМЕНИ ---
-	  if (req.user) {
-		try {
-		  await pool.query(
-			"UPDATE sessions SET last_active_at = CURRENT_TIMESTAMP WHERE user_id = $1",
-			[req.user.id]
-		  );
-		} catch (dbError) {
-		  console.error('Некритичная ошибка продления сессии:', dbError.message);
+// 🟢 ОБНОВЛЕННОЕ: Фиксируем активность самого пользователя (админа)
+		if (req.user) {
+		  try {
+			await pool.query(
+			  "UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE id = $1",
+			  [req.user.id]
+			);
+		  } catch (dbError) {
+			console.error('Ошибка обновления активности юзера:', dbError.message);
+		  }
 		}
-	  }
-	  // --------------------------------------------
 	  
 	  next(); // Пропускаем дальше к контроллеру
 	} catch (error) {

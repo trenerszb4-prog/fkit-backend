@@ -104,26 +104,42 @@ async function getMe(req, res) {
 async function getAdminData(req, res) {
   try {
 	const SUPER_ADMIN = 'support@f-kit.ru'; 
-
 	const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
 	if (!userRes.rows[0] || userRes.rows[0].email !== SUPER_ADMIN) {
-	  return res.status(403).json({ success: false, message: 'Доступ запрещен. Вы не администратор.' });
+	  return res.status(403).json({ success: false, message: 'Доступ запрещен.' });
 	}
 
-	const usersResult = await pool.query('SELECT id, email, subscription_type, subscription_expires_at, created_at, subscription_updated_at FROM users ORDER BY created_at DESC');
-	const totalUsers = usersResult.rowCount;
+	// 1. Считаем текущий онлайн (активность за последние 5 минут)
+	const adminsOnline = await pool.query("SELECT COUNT(*)::int FROM users WHERE last_active_at > NOW() - INTERVAL '5 minutes'");
+	const participantsOnline = await pool.query("SELECT COUNT(*)::int FROM participants WHERE last_seen_at > NOW() - INTERVAL '5 minutes' AND status = 'active'");
 	
-	// 🟢 ДОБАВЛЕНО ::int для жесткой конвертации в число
-	const liveSessionsResult = await pool.query("SELECT COUNT(*)::int FROM sessions WHERE status = 'live'");
-	const liveSessions = liveSessionsResult.rows[0].count;
+	const currentTotalOnline = adminsOnline.rows[0].count + participantsOnline.rows[0].count;
 
-	// 🟢 ДОБАВЛЕНО ::int для жесткой конвертации в число
+	// 2. Обновляем пик за сегодня (если текущий онлайн выше сохраненного)
+	await pool.query(`
+	  INSERT INTO peak_stats (day, max_online) 
+	  VALUES (CURRENT_DATE, $1) 
+	  ON CONFLICT (day) DO UPDATE 
+	  SET max_online = GREATEST(peak_stats.max_online, EXCLUDED.max_online)
+	`, [currentTotalOnline]);
+
+	// 3. Собираем данные для графика (последние 14 дней)
+	const chartResult = await pool.query("SELECT to_char(day, 'DD.MM') as label, max_online as value FROM peak_stats ORDER BY day DESC LIMIT 14");
+	
+	// Остальная статистика
+	const usersResult = await pool.query('SELECT id, email, subscription_type, subscription_expires_at, created_at, subscription_updated_at FROM users ORDER BY created_at DESC');
+	const liveSessionsResult = await pool.query("SELECT COUNT(*)::int FROM sessions WHERE status = 'live'");
 	const scheduledSessionsResult = await pool.query("SELECT COUNT(*)::int FROM sessions WHERE status = 'scheduled'");
-	const scheduledSessions = scheduledSessionsResult.rows[0].count;
 
 	res.json({
 	  success: true,
-	  stats: { totalUsers, liveSessions, scheduledSessions }, 
+	  stats: { 
+		totalUsers: usersResult.rowCount, 
+		liveSessions: liveSessionsResult.rows[0].count,
+		scheduledSessions: scheduledSessionsResult.rows[0].count,
+		onlineNow: currentTotalOnline // 🟢 Передаем онлайн
+	  },
+	  chartData: chartResult.rows.reverse(), // 🟢 Данные для графика
 	  users: usersResult.rows
 	});
   } catch (error) {
