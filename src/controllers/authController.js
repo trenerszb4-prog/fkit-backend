@@ -119,8 +119,9 @@ async function getAdminData(req, res) {
 	const scheduledSessionsResult = await pool.query("SELECT COUNT(*)::int FROM sessions WHERE status = 'scheduled'");
 	const scheduledSessions = scheduledSessionsResult.rows[0].count;
 
-	const adminsOnline = await pool.query("SELECT COUNT(*)::int FROM users WHERE last_active_at > NOW() - INTERVAL '5 minutes'");
-	const participantsOnline = await pool.query("SELECT COUNT(*)::int FROM participants WHERE last_seen_at > NOW() - INTERVAL '5 minutes' AND status = 'active'");
+	// 🟢 ИЗМЕНЕНИЕ: Сократили время удержания в онлайне с 5 до 2 минут
+	const adminsOnline = await pool.query("SELECT COUNT(*)::int FROM users WHERE last_active_at > NOW() - INTERVAL '2 minutes'");
+	const participantsOnline = await pool.query("SELECT COUNT(*)::int FROM participants WHERE last_seen_at > NOW() - INTERVAL '2 minutes' AND status = 'active'");
 	const currentTotalOnline = adminsOnline.rows[0].count + participantsOnline.rows[0].count;
 
 	await pool.query(`
@@ -130,12 +131,10 @@ async function getAdminData(req, res) {
 	  SET max_online = GREATEST(peak_stats.max_online, EXCLUDED.max_online)
 	`, [currentTotalOnline]);
 
-	// 🟢 НОВОЕ: Логика фильтрации графика
-	const range = parseInt(req.query.range) || 7; // По умолчанию 7 дней
+	const range = parseInt(req.query.range) || 7; 
 	let chartResult;
 
 	if (range === 365) {
-	  // Для года: группируем данные по месяцам, берем абсолютный максимум за каждый месяц
 	  chartResult = await pool.query(`
 		SELECT to_char(date_trunc('month', day), 'MM.YYYY') as label, MAX(max_online)::int as value
 		FROM peak_stats
@@ -144,7 +143,6 @@ async function getAdminData(req, res) {
 		ORDER BY date_trunc('month', day) DESC
 	  `);
 	} else {
-	  // Для недели (7) и месяца (30): отдаем данные по дням
 	  chartResult = await pool.query(
 		"SELECT to_char(day, 'DD.MM') as label, max_online as value FROM peak_stats ORDER BY day DESC LIMIT $1",
 		[range]
