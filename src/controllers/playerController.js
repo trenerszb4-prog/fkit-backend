@@ -2,6 +2,8 @@ const pool = require('../config/db');
 const { broadcastToSession } = require('../realtime/ws');
 
 const PARTICIPANT_HEARTBEAT_TTL_MS = 30 * 1000;
+// 🟢 Базовая ссылка на бакет Яндекса
+const STORAGE_BASE = "https://storage.yandexcloud.net/f-kit-assets/decks/";
 
 function nowIso() {
   return new Date().toISOString();
@@ -150,34 +152,31 @@ async function updateParticipantFields(participantId, fields) {
   );
 }
 
+// 🟢 ГЕНЕРИРУЕМ КОЛОДУ НА ЛЕТУ БЕЗ БАЗЫ ДАННЫХ
 async function getDeckById(deckId) {
-  const result = await pool.query(
-	`
-	SELECT *
-	FROM decks
-	WHERE id = $1
-	  AND is_active = true
-	LIMIT 1
-	`,
-	[deckId]
-  );
-
-  return result.rows[0] || null;
+  const id = deckId || 'classic';
+  return {
+	id: id,
+	title: `Колода ${id}`,
+	description: 'Виртуальная колода из Yandex Cloud',
+	back_image_url: `${STORAGE_BASE}${id}/back.jpg`
+  };
 }
 
+// 🟢 ГЕНЕРИРУЕМ 50 КАРТ НА ЛЕТУ БЕЗ БАЗЫ ДАННЫХ
 async function getDeckCardsByDeckId(deckId) {
-  const result = await pool.query(
-	`
-	SELECT *
-	FROM deck_cards
-	WHERE deck_id = $1
-	  AND is_active = true
-	ORDER BY sort_order ASC
-	`,
-	[deckId]
-  );
-
-  return result.rows;
+  const id = deckId || 'classic';
+  const cards = [];
+  for (let i = 1; i <= 50; i++) {
+	cards.push({
+	  id: String(i),
+	  deck_id: id,
+	  title: `Карта ${i}`,
+	  image_url: `${STORAGE_BASE}${id}/${i}.jpg`,
+	  sort_order: i
+	});
+  }
+  return cards;
 }
 
 function formatDeck(deck) {
@@ -446,7 +445,6 @@ async function joinByPin(req, res) {
 	  ]
 	);
 
-// Сообщаем экрану, что зашел новый участник
 	broadcastToSession(session.id, {
 	  type: 'participant_joined',
 	  participantId: participant.id,
@@ -569,14 +567,6 @@ async function getPlayerCards(req, res) {
 	});
 
 	const deck = await getDeckById(session.settings?.deckId);
-
-	if (!deck) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Колода не найдена'
-	  });
-	}
-
 	const allCards = await getDeckCardsByDeckId(deck.id);
 
 	let availableCards = allCards;
@@ -621,7 +611,7 @@ async function showCard(req, res) {
 	const { participantId } = req.params;
 	const { cardId } = req.body;
 
-	// 🔥 ОБЪЕДИНЁННЫЙ ЗАПРОС
+	// 🟢 ОБЪЕДИНЁННЫЙ ЗАПРОС (Убрали тяжелый JOIN к несуществующей таблице decks)
 	const dataResult = await pool.query(
 	  `
 	  SELECT 
@@ -632,14 +622,10 @@ async function showCard(req, res) {
 	
 		s.id as session_id,
 		s.status as session_status,
-		s.settings,
-	
-		d.id as deck_id,
-		d.is_active as deck_active
+		s.settings
 	
 	  FROM participants p
 	  JOIN sessions s ON s.id = p.session_id
-	  LEFT JOIN decks d ON d.id = (s.settings->>'deckId')
 	
 	  WHERE p.id = $1
 	  LIMIT 1
@@ -663,39 +649,26 @@ async function showCard(req, res) {
 	  });
 	}
 
-	if (!data.deck_id || !data.deck_active) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Колода не найдена'
-	  });
-	}
+	const deckId = data.settings?.deckId || 'classic';
 
-	// 🔥 ПОЛУЧАЕМ КАРТУ (у тебя уже оптимизировано)
-	const cardResult = await pool.query(
-	  `
-	  SELECT *
-	  FROM deck_cards
-	  WHERE id = $1
-		AND deck_id = $2
-		AND is_active = true
-	  LIMIT 1
-	  `,
-	  [cardId, data.deck_id]
-	);
-
-	const card = cardResult.rows[0];
-
-	if (!card) {
+	// 🟢 ГЕНЕРИРУЕМ КАРТУ НА ЛЕТУ
+	const cardNum = parseInt(cardId, 10);
+	if (isNaN(cardNum) || cardNum < 1 || cardNum > 50) {
 	  return res.status(404).json({
 		success: false,
 		message: 'Карта не найдена'
 	  });
 	}
 
+	const card = {
+	  id: String(cardNum),
+	  image_url: `${STORAGE_BASE}${deckId}/${cardNum}.jpg`
+	};
+
 	const settings = data.settings || {};
 	const maxCardsOnScreen = Math.max(1, Number(settings.maxCardsOnScreen || 1));
 
-	// 🔥 АКТИВНЫЕ КАРТЫ (у тебя уже оптимизировано)
+	// АКТИВНЫЕ КАРТЫ НА ЭКРАНЕ
 	const activeCardsResult = await pool.query(
 	  `
 	  SELECT id, participant_id
@@ -713,7 +686,7 @@ async function showCard(req, res) {
 	  (c) => c.participant_id === data.participant_id
 	);
 
-	// 🔥 ОБНОВЛЕНИЕ КАРТЫ
+	// ОБНОВЛЕНИЕ КАРТЫ
 	if (existingCard) {
 	  const result = await pool.query(
 		`
@@ -749,7 +722,7 @@ async function showCard(req, res) {
 	  return res.json(response);
 	}
 
-	// 🔥 УДАЛЕНИЕ СТАРОЙ КАРТЫ (если лимит)
+	// УДАЛЕНИЕ СТАРОЙ КАРТЫ (если лимит)
 	if (activeCards.length >= maxCardsOnScreen) {
 	  const oldest = activeCards[0];
 
@@ -764,7 +737,7 @@ async function showCard(req, res) {
 	  );
 	}
 
-	// 🔥 ВСТАВКА НОВОЙ КАРТЫ
+	// ВСТАВКА НОВОЙ КАРТЫ
 	const newCardResult = await pool.query(
 	  `
 	  INSERT INTO screen_cards (
@@ -873,7 +846,7 @@ async function recallCard(req, res) {
 	  });
 	}
 
-broadcastToSession(participant.session_id, {
+	broadcastToSession(participant.session_id, {
 	  type: 'card_removed'
 	});
 	
@@ -921,7 +894,7 @@ async function leaveSession(req, res) {
 	  [participant.id, participant.session_id]
 	);
 
-broadcastToSession(participant.session_id, {
+	broadcastToSession(participant.session_id, {
 	  type: 'participant_left'
 	});
 	
@@ -1005,7 +978,7 @@ async function sendReaction(req, res) {
 	  });
 	}
 
-await pool.query(
+	await pool.query(
 	  `
 	  INSERT INTO reactions (
 		id,
@@ -1025,7 +998,7 @@ await pool.query(
 	  ]
 	);
 
-broadcastToSession(participant.session_id, {
+	broadcastToSession(participant.session_id, {
 	  type: 'reaction_added',
 	  emoji
 	});
@@ -1102,14 +1075,6 @@ async function replaceBlindCard(req, res) {
 	}
 
 	const deck = await getDeckById(session.settings?.deckId);
-
-	if (!deck) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Колода не найдена'
-	  });
-	}
-
 	const allDeckCards = await getDeckCardsByDeckId(deck.id);
 
 	const participantForLogic = {
@@ -1139,7 +1104,7 @@ async function replaceBlindCard(req, res) {
 	  last_seen_at: nowIso()
 	});
 
-broadcastToSession(participant.session_id, {
+	broadcastToSession(participant.session_id, {
 	  type: 'card_replaced'
 	});
 	
