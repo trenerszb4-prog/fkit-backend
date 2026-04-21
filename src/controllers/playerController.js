@@ -611,7 +611,7 @@ async function showCard(req, res) {
 	const { participantId } = req.params;
 	const { cardId } = req.body;
 
-	// 🟢 ОБЪЕДИНЁННЫЙ ЗАПРОС (Убрали тяжелый JOIN к несуществующей таблице decks)
+	// 🟢 ОБЪЕДИНЁННЫЙ ЗАПРОС
 	const dataResult = await pool.query(
 	  `
 	  SELECT 
@@ -636,17 +636,11 @@ async function showCard(req, res) {
 	const data = dataResult.rows[0];
 
 	if (!data || data.participant_status !== 'active') {
-	  return res.status(404).json({
-		success: false,
-		message: 'Участник не найден или не активен'
-	  });
+	  return res.status(404).json({ success: false, message: 'Участник не найден или не активен' });
 	}
 
 	if (data.session_status !== 'live') {
-	  return res.status(403).json({
-		success: false,
-		message: 'Сессия больше не активна'
-	  });
+	  return res.status(403).json({ success: false, message: 'Сессия больше не активна' });
 	}
 
 	const deckId = data.settings?.deckId || 'classic';
@@ -654,10 +648,7 @@ async function showCard(req, res) {
 	// 🟢 ГЕНЕРИРУЕМ КАРТУ НА ЛЕТУ
 	const cardNum = parseInt(cardId, 10);
 	if (isNaN(cardNum) || cardNum < 1 || cardNum > 50) {
-	  return res.status(404).json({
-		success: false,
-		message: 'Карта не найдена'
-	  });
+	  return res.status(404).json({ success: false, message: 'Карта не найдена' });
 	}
 
 	const card = {
@@ -673,37 +664,28 @@ async function showCard(req, res) {
 	  `
 	  SELECT id, participant_id
 	  FROM screen_cards
-	  WHERE session_id = $1
-		AND is_active = true
+	  WHERE session_id = $1 AND is_active = true
 	  ORDER BY shown_at ASC
 	  `,
 	  [data.session_id]
 	);
 
 	const activeCards = activeCardsResult.rows;
+	const existingCard = activeCards.find((c) => c.participant_id === data.participant_id);
 
-	const existingCard = activeCards.find(
-	  (c) => c.participant_id === data.participant_id
-	);
-
-	// ОБНОВЛЕНИЕ КАРТЫ
+	// 🟢 ОБНОВЛЕНИЕ КАРТЫ (Передаем NULL вместо старого ID)
 	if (existingCard) {
 	  const result = await pool.query(
 		`
 		UPDATE screen_cards
-		SET deck_card_id = $1,
-			image_url = $2,
-			participant_name = $3,
+		SET deck_card_id = NULL,
+			image_url = $1,
+			participant_name = $2,
 			updated_at = now()
-		WHERE id = $4
+		WHERE id = $3
 		RETURNING *
 		`,
-		[
-		  card.id,
-		  card.image_url,
-		  data.display_name,
-		  existingCard.id
-		]
+		[card.image_url, data.display_name, existingCard.id]
 	  );
 
 	  startOrRestartTimer({ id: data.session_id, settings: data.settings }).catch(console.error);
@@ -715,42 +697,27 @@ async function showCard(req, res) {
 		timer: null
 	  };
 
-	  broadcastToSession(data.session_id, {
-		type: 'card_updated'
-	  });
-
+	  broadcastToSession(data.session_id, { type: 'card_updated' });
 	  return res.json(response);
 	}
 
 	// УДАЛЕНИЕ СТАРОЙ КАРТЫ (если лимит)
 	if (activeCards.length >= maxCardsOnScreen) {
 	  const oldest = activeCards[0];
-
 	  await pool.query(
-		`
-		UPDATE screen_cards
-		SET is_active = false,
-			removed_at = now()
-		WHERE id = $1
-		`,
+		`UPDATE screen_cards SET is_active = false, removed_at = now() WHERE id = $1`,
 		[oldest.id]
 	  );
 	}
 
-	// ВСТАВКА НОВОЙ КАРТЫ
+	// 🟢 ВСТАВКА НОВОЙ КАРТЫ (Передаем NULL вместо старого ID)
 	const newCardResult = await pool.query(
 	  `
 	  INSERT INTO screen_cards (
-		id,
-		session_id,
-		participant_id,
-		participant_name,
-		deck_card_id,
-		image_url,
-		is_active,
-		shown_at
+		id, session_id, participant_id, participant_name,
+		deck_card_id, image_url, is_active, shown_at
 	  )
-	  VALUES ($1,$2,$3,$4,$5,$6,true,now())
+	  VALUES ($1, $2, $3, $4, NULL, $5, true, now())
 	  RETURNING *
 	  `,
 	  [
@@ -758,7 +725,6 @@ async function showCard(req, res) {
 		data.session_id,
 		data.participant_id,
 		data.display_name,
-		card.id,
 		card.image_url
 	  ]
 	);
@@ -772,18 +738,12 @@ async function showCard(req, res) {
 	  timer: null
 	};
 
-	broadcastToSession(data.session_id, {
-	  type: 'card_shown'
-	});
-
+	broadcastToSession(data.session_id, { type: 'card_shown' });
 	return res.json(response);
 
   } catch (error) {
 	console.error('showCard error:', error);
-	return res.status(500).json({
-	  success: false,
-	  message: 'Ошибка показа карты'
-	});
+	return res.status(500).json({ success: false, message: 'Ошибка показа карты' });
   }
 }
 
