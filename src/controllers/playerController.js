@@ -3,7 +3,7 @@ const { broadcastToSession } = require('../realtime/ws');
 
 const PARTICIPANT_HEARTBEAT_TTL_MS = 30 * 1000;
 // 🟢 Базовая ссылка на бакет Яндекса
-const STORAGE_BASE = "https://storage.yandexcloud.net/f-kit-assets/decks/";
+const STORAGE_BASE = "https://cdn.f-kit.ru/decks/";
 
 function nowIso() {
   return new Date().toISOString();
