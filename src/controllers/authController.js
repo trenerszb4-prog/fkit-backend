@@ -110,7 +110,16 @@ async function getAdminData(req, res) {
 	  return res.status(403).json({ success: false, message: 'Доступ запрещен. Вы не администратор.' });
 	}
 
-	const usersResult = await pool.query('SELECT id, email, subscription_type, subscription_expires_at, created_at, subscription_updated_at, last_active_at FROM users ORDER BY created_at DESC');
+	// 🟢 ОБНОВЛЕННЫЙ ЗАПРОС: Теперь база сама считает сессии для каждого юзера
+	const usersResult = await pool.query(`
+	  SELECT 
+		u.id, u.email, u.subscription_type, u.subscription_expires_at, 
+		u.created_at, u.subscription_updated_at, u.last_active_at,
+		(SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.status = 'live')::int AS live_sessions,
+		(SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.status = 'scheduled')::int AS scheduled_sessions
+	  FROM users u 
+	  ORDER BY u.created_at DESC
+	`);
 	const totalUsers = usersResult.rowCount;
 	
 	const liveSessionsResult = await pool.query("SELECT COUNT(*)::int FROM sessions WHERE status = 'live'");
