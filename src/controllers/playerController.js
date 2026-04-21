@@ -159,7 +159,7 @@ async function getDeckById(deckId) {
 	id: id,
 	title: `Колода ${id}`,
 	description: 'Виртуальная колода из Yandex Cloud',
-	back_image_url: `${STORAGE_BASE}${id}/back.jpg`
+	back_image_url: `${STORAGE_BASE}${id}/back.webp`
   };
 }
 
@@ -172,7 +172,7 @@ async function getDeckCardsByDeckId(deckId) {
 	  id: String(i),
 	  deck_id: id,
 	  title: `Карта ${i}`,
-	  image_url: `${STORAGE_BASE}${id}/${i}.jpg`,
+	  image_url: `${STORAGE_BASE}${id}/${i}.webp`,
 	  sort_order: i
 	});
   }
@@ -653,7 +653,7 @@ async function showCard(req, res) {
 
 	const card = {
 	  id: String(cardNum),
-	  image_url: `${STORAGE_BASE}${deckId}/${cardNum}.jpg`
+	  image_url: `${STORAGE_BASE}${deckId}/${cardNum}.webp`
 	};
 
 	const settings = data.settings || {};
