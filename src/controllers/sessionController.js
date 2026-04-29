@@ -12,8 +12,6 @@ function isPremiumAccessDenied(user, serviceType) {
   const FREE_SERVICES = ['cloud', 'timer', 'radio'];
   // Бесплатные инструменты пускаем всегда
   if (FREE_SERVICES.includes(serviceType)) return false; 
-  // Суперадмина пускаем всегда
-  if (user.email === 'witamin@ngs.ru') return false; 
 
   // Если подписки вообще нет - запрет
   if (!user.subscription_expires_at) return true; 
@@ -173,7 +171,12 @@ async function createSession(req, res) {
 	  saveResult: req.body.settings?.saveResult !== undefined ? Boolean(req.body.settings.saveResult) : true,
 	  bgWordsEnabled: req.body.settings?.bgWordsEnabled !== undefined ? Boolean(req.body.settings.bgWordsEnabled) : false,
 	  duplicateWordsEnabled: req.body.settings?.duplicateWordsEnabled !== undefined ? Boolean(req.body.settings.duplicateWordsEnabled) : false,
-	  duplicateCount: req.body.settings?.duplicateCount !== undefined ? Number(req.body.settings.duplicateCount) : 3
+	  duplicateCount: req.body.settings?.duplicateCount !== undefined ? Number(req.body.settings.duplicateCount) : 3,
+	  
+	  // 🟢 ДОБАВЛЕНЫ ПОЛЯ ДЛЯ ГОЛОСОВАНИЯ
+	  chartType: req.body.settings?.chartType || 'bar',
+	  allowMultiple: req.body.settings?.allowMultiple !== undefined ? Boolean(req.body.settings.allowMultiple) : false,
+	  options: Array.isArray(req.body.settings?.options) ? req.body.settings.options : []
 	};
 
 	const result = await pool.query(
@@ -288,6 +291,11 @@ async function updateSession(req, res) {
 	  if (req.body.settings.bgWordsEnabled !== undefined) nextSettings.bgWordsEnabled = Boolean(req.body.settings.bgWordsEnabled);
 	  if (req.body.settings.duplicateWordsEnabled !== undefined) nextSettings.duplicateWordsEnabled = Boolean(req.body.settings.duplicateWordsEnabled);
 	  if (req.body.settings.duplicateCount !== undefined) nextSettings.duplicateCount = Number(req.body.settings.duplicateCount);
+	  
+	  // 🟢 ДОБАВЛЕНЫ ПОЛЯ ДЛЯ ГОЛОСОВАНИЯ
+	  if (req.body.settings.chartType !== undefined) nextSettings.chartType = String(req.body.settings.chartType);
+	  if (req.body.settings.allowMultiple !== undefined) nextSettings.allowMultiple = Boolean(req.body.settings.allowMultiple);
+	  if (req.body.settings.options !== undefined) nextSettings.options = req.body.settings.options;
 	}
 
 	const result = await pool.query(
