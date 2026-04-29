@@ -609,9 +609,9 @@ async function getPlayerCards(req, res) {
 async function showCard(req, res) {
   try {
 	const { participantId } = req.params;
-	const { cardId, imageUrl } = req.body; // 🟢 Принимаем и cardId, и imageUrl
+	const { cardId, imageUrl } = req.body; // 🟢 Принимаем оба варианта
 
-	// 🟢 ОБЪЕДИНЁННЫЙ ЗАПРОС
+	// ОБЪЕДИНЁННЫЙ ЗАПРОС
 	const dataResult = await pool.query(
 	  `
 	  SELECT 
@@ -642,11 +642,10 @@ async function showCard(req, res) {
 
 	let finalImageUrl = '';
 
-	// 🟢 ЛОГИКА ВЫБОРА: Base64 (Рисунок) ИЛИ Обычная карта по ID
+	// 🟢 ЛОГИКА: Рисунок (Base64) ИЛИ Классическая карта
 	if (imageUrl && imageUrl.startsWith('data:image')) {
-	  finalImageUrl = imageUrl; // Это модерационная карта
+	  finalImageUrl = imageUrl;
 	} else {
-	  // Это классическая метафорическая карта
 	  const deckId = data.settings?.deckId || 'classic';
 	  const cardNum = parseInt(cardId, 10);
 	  if (isNaN(cardNum) || cardNum < 1 || cardNum > 50) {
@@ -672,7 +671,7 @@ async function showCard(req, res) {
 	const activeCards = activeCardsResult.rows;
 	const existingCard = activeCards.find((c) => c.participant_id === data.participant_id);
 
-	// 🟢 ОБНОВЛЕНИЕ КАРТЫ (Передаем finalImageUrl)
+	// 🟢 ОБНОВЛЕНИЕ СУЩЕСТВУЮЩЕЙ КАРТЫ
 	if (existingCard) {
 	  const result = await pool.query(
 		`
@@ -690,7 +689,6 @@ async function showCard(req, res) {
 	  startOrRestartTimer({ id: data.session_id, settings: data.settings }).catch(console.error);
 
 	  broadcastToSession(data.session_id, { type: 'card_updated' });
-	  
 	  return res.json({
 		success: true,
 		message: 'Карта обновлена',
@@ -699,7 +697,7 @@ async function showCard(req, res) {
 	  });
 	}
 
-	// УДАЛЕНИЕ СТАРОЙ КАРТЫ (если лимит)
+	// УДАЛЕНИЕ СТАРОЙ КАРТЫ ПРИ ЛИМИТЕ
 	if (activeCards.length >= maxCardsOnScreen) {
 	  const oldest = activeCards[0];
 	  await pool.query(
@@ -708,7 +706,7 @@ async function showCard(req, res) {
 	  );
 	}
 
-	// 🟢 ВСТАВКА НОВОЙ КАРТЫ
+	// 🟢 СОЗДАНИЕ НОВОЙ КАРТЫ
 	const newCardResult = await pool.query(
 	  `
 	  INSERT INTO screen_cards (
@@ -730,7 +728,6 @@ async function showCard(req, res) {
 	startOrRestartTimer({ id: data.session_id, settings: data.settings }).catch(console.error);
 
 	broadcastToSession(data.session_id, { type: 'card_shown' });
-	
 	return res.json({
 	  success: true,
 	  message: 'Карта показана',
