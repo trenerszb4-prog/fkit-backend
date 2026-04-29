@@ -609,7 +609,7 @@ async function getPlayerCards(req, res) {
 async function showCard(req, res) {
   try {
 	const { participantId } = req.params;
-	const { cardId } = req.body;
+	const { cardId, imageUrl } = req.body; // 🟢 Принимаем и cardId, и imageUrl
 
 	// 🟢 ОБЪЕДИНЁННЫЙ ЗАПРОС
 	const dataResult = await pool.query(
@@ -619,14 +619,11 @@ async function showCard(req, res) {
 		p.display_name,
 		p.status as participant_status,
 		p.session_id,
-	
 		s.id as session_id,
 		s.status as session_status,
 		s.settings
-	
 	  FROM participants p
 	  JOIN sessions s ON s.id = p.session_id
-	
 	  WHERE p.id = $1
 	  LIMIT 1
 	  `,
@@ -643,18 +640,20 @@ async function showCard(req, res) {
 	  return res.status(403).json({ success: false, message: 'Сессия больше не активна' });
 	}
 
-	const deckId = data.settings?.deckId || 'classic';
+	let finalImageUrl = '';
 
-	// 🟢 ГЕНЕРИРУЕМ КАРТУ НА ЛЕТУ
-	const cardNum = parseInt(cardId, 10);
-	if (isNaN(cardNum) || cardNum < 1 || cardNum > 50) {
-	  return res.status(404).json({ success: false, message: 'Карта не найдена' });
+	// 🟢 ЛОГИКА ВЫБОРА: Base64 (Рисунок) ИЛИ Обычная карта по ID
+	if (imageUrl && imageUrl.startsWith('data:image')) {
+	  finalImageUrl = imageUrl; // Это модерационная карта
+	} else {
+	  // Это классическая метафорическая карта
+	  const deckId = data.settings?.deckId || 'classic';
+	  const cardNum = parseInt(cardId, 10);
+	  if (isNaN(cardNum) || cardNum < 1 || cardNum > 50) {
+		return res.status(404).json({ success: false, message: 'Карта не найдена' });
+	  }
+	  finalImageUrl = `${STORAGE_BASE}${deckId}/${cardNum}.webp`;
 	}
-
-	const card = {
-	  id: String(cardNum),
-	  image_url: `${STORAGE_BASE}${deckId}/${cardNum}.webp`
-	};
 
 	const settings = data.settings || {};
 	const maxCardsOnScreen = Math.max(1, Number(settings.maxCardsOnScreen || 1));
@@ -673,7 +672,7 @@ async function showCard(req, res) {
 	const activeCards = activeCardsResult.rows;
 	const existingCard = activeCards.find((c) => c.participant_id === data.participant_id);
 
-	// 🟢 ОБНОВЛЕНИЕ КАРТЫ (Передаем NULL вместо старого ID)
+	// 🟢 ОБНОВЛЕНИЕ КАРТЫ (Передаем finalImageUrl)
 	if (existingCard) {
 	  const result = await pool.query(
 		`
@@ -685,20 +684,19 @@ async function showCard(req, res) {
 		WHERE id = $3
 		RETURNING *
 		`,
-		[card.image_url, data.display_name, existingCard.id]
+		[finalImageUrl, data.display_name, existingCard.id]
 	  );
 
 	  startOrRestartTimer({ id: data.session_id, settings: data.settings }).catch(console.error);
 
-	  const response = {
+	  broadcastToSession(data.session_id, { type: 'card_updated' });
+	  
+	  return res.json({
 		success: true,
 		message: 'Карта обновлена',
 		screenCard: result.rows[0],
 		timer: null
-	  };
-
-	  broadcastToSession(data.session_id, { type: 'card_updated' });
-	  return res.json(response);
+	  });
 	}
 
 	// УДАЛЕНИЕ СТАРОЙ КАРТЫ (если лимит)
@@ -710,7 +708,7 @@ async function showCard(req, res) {
 	  );
 	}
 
-	// 🟢 ВСТАВКА НОВОЙ КАРТЫ (Передаем NULL вместо старого ID)
+	// 🟢 ВСТАВКА НОВОЙ КАРТЫ
 	const newCardResult = await pool.query(
 	  `
 	  INSERT INTO screen_cards (
@@ -725,21 +723,20 @@ async function showCard(req, res) {
 		data.session_id,
 		data.participant_id,
 		data.display_name,
-		card.image_url
+		finalImageUrl
 	  ]
 	);
 
 	startOrRestartTimer({ id: data.session_id, settings: data.settings }).catch(console.error);
 
-	const response = {
+	broadcastToSession(data.session_id, { type: 'card_shown' });
+	
+	return res.json({
 	  success: true,
 	  message: 'Карта показана',
 	  screenCard: newCardResult.rows[0],
 	  timer: null
-	};
-
-	broadcastToSession(data.session_id, { type: 'card_shown' });
-	return res.json(response);
+	});
 
   } catch (error) {
 	console.error('showCard error:', error);
