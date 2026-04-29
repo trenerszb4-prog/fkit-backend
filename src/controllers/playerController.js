@@ -1099,6 +1099,84 @@ function formatSession(session) {
   };
 }
 
+// --- ОТПРАВКА МОДЕРАЦИОННОЙ КАРТЫ (РИСУНОК/ТЕКСТ) ---
+async function sendModerationCard(req, res) {
+  try {
+	const { participantId } = req.params;
+	const { imageBase64 } = req.body;
+
+	if (!imageBase64 || !imageBase64.startsWith('data:image')) {
+	  return res.status(400).json({ success: false, message: 'Неверный формат изображения' });
+	}
+
+	const dataResult = await pool.query(
+	  `
+	  SELECT 
+		p.id as participant_id,
+		p.display_name,
+		p.status as participant_status,
+		p.session_id,
+		s.id as session_id,
+		s.status as session_status,
+		s.settings
+	  FROM participants p
+	  JOIN sessions s ON s.id = p.session_id
+	  WHERE p.id = $1
+	  LIMIT 1
+	  `,
+	  [participantId]
+	);
+
+	const data = dataResult.rows[0];
+
+	if (!data || data.participant_status !== 'active') {
+	  return res.status(404).json({ success: false, message: 'Участник не найден или не активен' });
+	}
+
+	if (data.session_status !== 'live') {
+	  return res.status(403).json({ success: false, message: 'Сессия больше не активна' });
+	}
+
+	const settings = data.settings || {};
+	const isUnlimited = settings.unlimitedCards === true;
+	const participantLimit = settings.participantCardsLimit || 1;
+	const maxOnScreen = settings.maxCardsOnScreen || 1;
+
+	// Проверяем лимиты
+	if (!isUnlimited) {
+	  const countQuery = await pool.query(
+		`SELECT COUNT(*) FROM moderation_cards WHERE participant_id = $1`,
+		[participantId]
+	  );
+	  if (parseInt(countQuery.rows[0].count) >= participantLimit) {
+		return res.status(403).json({ success: false, message: 'Вы исчерпали лимит карт' });
+	  }
+	}
+
+	// Если на экране должна быть 1 карта, удаляем предыдущую отправленную участником
+	if (maxOnScreen === 1) {
+	  await pool.query(
+		`DELETE FROM moderation_cards WHERE session_id = $1 AND participant_id = $2`,
+		[data.session_id, participantId]
+	  );
+	}
+
+	const insertQuery = await pool.query(
+	  `INSERT INTO moderation_cards (session_id, participant_id, image_data) 
+	   VALUES ($1, $2, $3) RETURNING id`,
+	  [data.session_id, participantId, imageBase64]
+	);
+
+	broadcastToSession(data.session_id, { type: 'card_shown' });
+
+	return res.json({ success: true, message: 'Карта отправлена!', cardId: insertQuery.rows[0].id });
+
+  } catch (error) {
+	console.error('sendModerationCard error:', error);
+	return res.status(500).json({ success: false, message: 'Ошибка отправки модерационной карты' });
+  }
+}
+
 module.exports = {
   joinByPin,
   getPlayerSession,
@@ -1109,5 +1187,6 @@ module.exports = {
   heartbeat,
   cleanupStaleParticipants,
   sendReaction,
-  replaceBlindCard
+  replaceBlindCard,
+  sendModerationCard
 };

@@ -12,5 +12,6 @@ router.post('/:participantId/cards/replace-random', playerController.replaceBlin
 router.post('/:participantId/leave', playerController.leaveSession);
 router.post('/:participantId/heartbeat', playerController.heartbeat);
 router.post('/:participantId/reactions', playerController.sendReaction);
+router.post('/:participantId/moderation/send', playerController.sendModerationCard);
 
 module.exports = router;
