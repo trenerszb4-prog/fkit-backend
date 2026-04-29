@@ -8,6 +8,7 @@ function formatSession(session) {
     pinCode: session.pin_code,
     status: session.status,
     settings: session.settings || {},
+    serviceType: session.service_type, // Добавлено поле типа сессии
     createdAt: session.created_at,
     updatedAt: session.updated_at,
     startedAt: session.started_at
@@ -50,29 +51,57 @@ async function getScreen(req, res) {
     const deckId = session.settings?.deckId || null;
     const deck = await getDeckById(deckId);
 
-    const activeCardsResult = await pool.query(
-      `
-      SELECT *
-      FROM screen_cards
-      WHERE session_id = $1
-        AND is_active = true
-      ORDER BY shown_at ASC
-      `,
-      [session.id]
-    );
+    let activeCards = [];
 
-    const activeCards = activeCardsResult.rows.map((c) => ({
-      id: c.id,
-      sessionId: c.session_id,
-      participantId: c.participant_id,
-      participantName: c.participant_name,
-      deckCardId: c.deck_card_id,
-      imageUrl: c.image_url,
-      isActive: c.is_active,
-      shownAt: c.shown_at,
-      updatedAt: c.updated_at,
-      removedAt: c.removed_at
-    }));
+    // 🟢 ВЕТВЛЕНИЕ: Откуда брать карты для экрана
+    if (session.service_type === 'moderation') {
+      const activeCardsResult = await pool.query(
+        `
+        SELECT mc.id, mc.session_id, mc.participant_id, mc.image_data, mc.created_at, p.display_name as participant_name
+        FROM moderation_cards mc
+        LEFT JOIN participants p ON mc.participant_id = p.id
+        WHERE mc.session_id = $1
+        ORDER BY mc.created_at ASC
+        `,
+        [session.id]
+      );
+      activeCards = activeCardsResult.rows.map((c) => ({
+        id: c.id,
+        sessionId: c.session_id,
+        participantId: c.participant_id,
+        participantName: c.participant_name,
+        deckCardId: null,
+        imageUrl: c.image_data, // Отдаем base64 как URL
+        isActive: true,
+        shownAt: c.created_at,
+        updatedAt: c.created_at,
+        removedAt: null
+      }));
+    } else {
+      // Старая логика для метафорических карт
+      const activeCardsResult = await pool.query(
+        `
+        SELECT *
+        FROM screen_cards
+        WHERE session_id = $1
+          AND is_active = true
+        ORDER BY shown_at ASC
+        `,
+        [session.id]
+      );
+      activeCards = activeCardsResult.rows.map((c) => ({
+        id: c.id,
+        sessionId: c.session_id,
+        participantId: c.participant_id,
+        participantName: c.participant_name,
+        deckCardId: c.deck_card_id,
+        imageUrl: c.image_url,
+        isActive: c.is_active,
+        shownAt: c.shown_at,
+        updatedAt: c.updated_at,
+        removedAt: c.removed_at
+      }));
+    }
 
     const participantsResult = await pool.query(
       `
@@ -119,16 +148,27 @@ async function getScreen(req, res) {
 
 async function clearScreen(req, res) {
   try {
-    await pool.query(
-      `
-      UPDATE screen_cards
-      SET is_active = false,
-          removed_at = now()
-      WHERE session_id = $1
-        AND is_active = true
-      `,
-      [req.params.id]
-    );
+    // Узнаем тип сессии, чтобы очистить правильную таблицу
+    const sessionResult = await pool.query(`SELECT service_type FROM sessions WHERE id = $1 LIMIT 1`, [req.params.id]);
+    const session = sessionResult.rows[0];
+
+    if (session && session.service_type === 'moderation') {
+      await pool.query(
+        `DELETE FROM moderation_cards WHERE session_id = $1`,
+        [req.params.id]
+      );
+    } else {
+      await pool.query(
+        `
+        UPDATE screen_cards
+        SET is_active = false,
+            removed_at = now()
+        WHERE session_id = $1
+          AND is_active = true
+        `,
+        [req.params.id]
+      );
+    }
 
     // 🔥 БРОДКАСТ: Сообщаем всем телефонам, что стол очищен
     const { broadcastToSession } = require('../realtime/ws');
@@ -191,27 +231,47 @@ async function getScreenReactions(req, res) {
 
 async function deleteScreenCard(req, res) {
   try {
-    const result = await pool.query(
-      `
-      UPDATE screen_cards
-      SET is_active = false,
-          removed_at = now()
-      WHERE id = $1
-        AND session_id = $2
-        AND is_active = true
-      RETURNING *
-      `,
-      [req.params.screenCardId, req.params.id]
-    );
+    const sessionResult = await pool.query(`SELECT service_type FROM sessions WHERE id = $1 LIMIT 1`, [req.params.id]);
+    const session = sessionResult.rows[0];
 
-    if (!result.rows.length) {
+    let deletedCard = null;
+
+    if (session && session.service_type === 'moderation') {
+      const result = await pool.query(
+        `
+        DELETE FROM moderation_cards 
+        WHERE id = $1 AND session_id = $2 
+        RETURNING *
+        `,
+        [req.params.screenCardId, req.params.id]
+      );
+      if (result.rows.length) {
+        deletedCard = result.rows[0];
+      }
+    } else {
+      const result = await pool.query(
+        `
+        UPDATE screen_cards
+        SET is_active = false,
+            removed_at = now()
+        WHERE id = $1
+          AND session_id = $2
+          AND is_active = true
+        RETURNING *
+        `,
+        [req.params.screenCardId, req.params.id]
+      );
+      if (result.rows.length) {
+        deletedCard = result.rows[0];
+      }
+    }
+
+    if (!deletedCard) {
       return res.status(404).json({
         success: false,
         message: 'Карта на экране не найдена'
       });
     }
-
-    const deletedCard = result.rows[0];
 
     // 🔥 БРОДКАСТ: Сообщаем конкретному телефону, что его карту удалили
     const { broadcastToSession } = require('../realtime/ws');
@@ -239,13 +299,13 @@ async function getScreenState(req, res) {
   try {
     const sessionId = req.params.id;
 
-    // 🔥 один запрос: session + deck
     const sessionResult = await pool.query(
       `
       SELECT 
         s.id,
         s.pin_code,
         s.settings,
+        s.service_type,
         d.back_image_url
       FROM sessions s
       LEFT JOIN decks d ON d.id = (s.settings->>'deckId')
@@ -264,22 +324,42 @@ async function getScreenState(req, res) {
       });
     }
 
-    // 🔥 только нужные поля для карт
-    const cardsResult = await pool.query(
-      `
-      SELECT 
-        id,
-        image_url,
-        participant_name
-      FROM screen_cards
-      WHERE session_id = $1
-        AND is_active = true
-      ORDER BY shown_at ASC
-      `,
-      [sessionId]
-    );
+    let screenCards = [];
 
-    // 🔥 только COUNT (без загрузки участников)
+    if (session.service_type === 'moderation') {
+      const cardsResult = await pool.query(
+        `
+        SELECT mc.id, mc.image_data as image_url, p.display_name as participant_name
+        FROM moderation_cards mc
+        LEFT JOIN participants p ON mc.participant_id = p.id
+        WHERE mc.session_id = $1
+        ORDER BY mc.created_at ASC
+        `,
+        [sessionId]
+      );
+      screenCards = cardsResult.rows.map(c => ({
+        id: c.id,
+        imageUrl: c.image_url,
+        participantName: c.participant_name
+      }));
+    } else {
+      const cardsResult = await pool.query(
+        `
+        SELECT id, image_url, participant_name
+        FROM screen_cards
+        WHERE session_id = $1
+          AND is_active = true
+        ORDER BY shown_at ASC
+        `,
+        [sessionId]
+      );
+      screenCards = cardsResult.rows.map(c => ({
+        id: c.id,
+        imageUrl: c.image_url,
+        participantName: c.participant_name
+      }));
+    }
+
     const countResult = await pool.query(
       `
       SELECT COUNT(*)::int as count
@@ -299,11 +379,7 @@ async function getScreenState(req, res) {
       deck: {
         backImageUrl: session.back_image_url
       },
-      screenCards: cardsResult.rows.map(c => ({
-        id: c.id,
-        imageUrl: c.image_url,
-        participantName: c.participant_name
-      })),
+      screenCards: screenCards,
       participantsCount: countResult.rows[0].count
     });
 
